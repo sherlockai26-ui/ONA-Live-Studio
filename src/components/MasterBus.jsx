@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { memo, useCallback } from 'react'
 import useMixerStore from '../store/mixerStore.js'
 import { audioEngine } from '../audio/audioEngine.js'
 
-function Fader({ label, volume, colorClass, onChangeVolume }) {
+const Fader = memo(function Fader({ label, volume, colorClass, onChangeVolume }) {
   return (
     <div className="flex flex-col items-center gap-1">
       <span className="text-[9px] text-[#737373] tracking-wider">{label}</span>
@@ -21,23 +21,23 @@ function Fader({ label, volume, colorClass, onChangeVolume }) {
       </div>
     </div>
   )
-}
+})
 
-export default function MasterBus() {
+function MasterBus() {
   const mainVolume  = useMixerStore(s => s.mainVolume)
   const subVolume   = useMixerStore(s => s.subVolume)
   const setMain     = useMixerStore(s => s.setMainVolume)
   const setSub      = useMixerStore(s => s.setSubVolume)
 
-  const handleMain = (v) => {
+  const handleMain = useCallback((v) => {
     setMain(v)
     if (audioEngine.initialized) audioEngine.setMainVolume(v)
-  }
+  }, [setMain])
 
-  const handleSub = (v) => {
+  const handleSub = useCallback((v) => {
     setSub(v)
     if (audioEngine.initialized) audioEngine.setSubVolume(v)
-  }
+  }, [setSub])
 
   return (
     <div className="border-t border-[#2a2a2a] p-3">
@@ -61,3 +61,5 @@ export default function MasterBus() {
     </div>
   )
 }
+
+export default memo(MasterBus)

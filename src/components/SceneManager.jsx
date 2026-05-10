@@ -1,16 +1,39 @@
-import React, { useEffect, useState } from 'react'
-import { useScenes } from '../hooks/useScenes.js'
+import React, { useState, useEffect, useCallback } from 'react'
+import { sceneEngine } from '../live/SceneEngine'
+import { sceneManager } from '../audio/state/SceneManager'
 
 export default function SceneManager() {
-  const { scenes, loading, refresh, save, load, remove } = useScenes()
+  const [scenes,  setScenes]  = useState([])
   const [newName, setNewName] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(() => {
+    setScenes(sceneEngine.listScenes().map(name => ({ name })))
+  }, [])
 
   useEffect(() => { refresh() }, [refresh])
 
-  const handleSave = async () => {
-    if (!newName.trim()) return
-    await save(newName)
+  const handleSave = () => {
+    const trimmed = newName.trim()
+    if (!trimmed) return
+    sceneEngine.save(trimmed)
     setNewName('')
+    refresh()
+  }
+
+  const handleLoad = async (name) => {
+    if (loading) return
+    setLoading(true)
+    try {
+      await sceneEngine.recall(name, { profile: 'smooth' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRemove = (name) => {
+    sceneManager.delete(name)
+    refresh()
   }
 
   return (
@@ -45,14 +68,14 @@ export default function SceneManager() {
             <div key={scene.name} className="flex items-center gap-1">
               <span className="flex-1 text-[9px] text-[#e5e5e5] truncate">{scene.name}</span>
               <button
-                onClick={() => load(scene.name)}
+                onClick={() => handleLoad(scene.name)}
                 disabled={loading}
                 className="text-[8px] px-1.5 py-0.5 rounded bg-[#2a2a2a] text-[#737373] hover:bg-[#3b82f6] hover:text-white transition-colors disabled:opacity-40"
               >
                 LOAD
               </button>
               <button
-                onClick={() => remove(scene.name)}
+                onClick={() => handleRemove(scene.name)}
                 className="text-[8px] px-1.5 py-0.5 rounded bg-[#2a2a2a] text-[#737373] hover:bg-[#ef4444] hover:text-white transition-colors"
               >
                 ✕

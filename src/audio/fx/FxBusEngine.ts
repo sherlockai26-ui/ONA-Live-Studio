@@ -25,9 +25,12 @@
  *   Retorno directo al main mix — no pasa por RoutingMatrix.
  */
 
+import * as Tone from 'tone'
 import { watchRunaway } from './FxCpuProtection'
 import type { DelayEngine } from './DelayEngine'
 import type { ReverbEngine } from './ReverbEngine'
+
+function _toneCtx() { return Tone.getContext() as unknown as AudioContext }
 
 export const NUM_FX_BUSES = 4
 
@@ -63,11 +66,12 @@ class FxBusEngineImpl {
 
   initialize(ctx: AudioContext, mainBus: GainNode): void {
     this._ctx = ctx
+    const nc  = _toneCtx()
     for (let i = 1; i <= NUM_FX_BUSES; i++) {
-      const input      = ctx.createGain()
-      const bypass     = ctx.createGain()
-      const analyser   = ctx.createAnalyser()
-      const returnGain = ctx.createGain()
+      const input      = nc.createGain()
+      const bypass     = nc.createGain()
+      const analyser   = nc.createAnalyser()
+      const returnGain = nc.createGain()
 
       analyser.fftSize               = ANALYSER_FFT_FX
       analyser.smoothingTimeConstant = 0

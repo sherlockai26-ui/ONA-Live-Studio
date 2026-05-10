@@ -26,6 +26,9 @@
  *   clipGuard: true (alerta al operador)
  */
 
+import * as Tone from 'tone'
+function _toneCtx(): AudioContext { return Tone.getContext() as unknown as AudioContext }
+
 const CURVE_SIZE    = 1024
 const SAT_DRIVE     = 1.5
 const LIMITER_THRESHOLD = -1   // dBFS
@@ -99,19 +102,20 @@ class MixBusProtectionImpl {
     this._outputDest = destInput
     this._onClipGuard = onClipGuard ?? null
 
-    // Build nodes
-    this._softSat   = ctx.createWaveShaper()
+    // Build nodes via Tone.getContext() so standardized-audio-context tracks them
+    const nc = _toneCtx()
+    this._softSat   = nc.createWaveShaper()
     this._softSat.curve     = buildSaturationCurve(this._config.satDrive)
     this._softSat.oversample = '2x'
 
-    this._limiter   = ctx.createDynamicsCompressor()
+    this._limiter   = nc.createDynamicsCompressor()
     this._limiter.threshold.value = this._config.limiterThresholdDb
     this._limiter.ratio.value     = 20
     this._limiter.attack.value    = 0.001
     this._limiter.release.value   = 0.1
     this._limiter.knee.value      = 0
 
-    this._clipGuard = ctx.createAnalyser()
+    this._clipGuard = nc.createAnalyser()
     this._clipGuard.fftSize               = 256
     this._clipGuard.smoothingTimeConstant = 0
     this._clipBuf = new Float32Array(256)

@@ -17,6 +17,9 @@
  *   group1 → out6 (recording drums)
  */
 
+import * as Tone from 'tone'
+function _toneCtx(): AudioContext { return Tone.getContext() as unknown as AudioContext }
+
 export type MatrixSource =
   | 'main' | 'sub' | 'cue'
   | 'aux1' | 'aux2' | 'aux3' | 'aux4' | 'aux5' | 'aux6' | 'aux7' | 'aux8'
@@ -49,8 +52,9 @@ class RoutingMatrixImpl {
 
   initialize(ctx: AudioContext, destination: AudioNode): void {
     this._ctx = ctx
+    const nc  = _toneCtx()
     for (const d of ALL_MATRIX_DESTS) {
-      const sum = ctx.createGain()
+      const sum = nc.createGain()
       sum.gain.value = 1
       sum.connect(destination)
       this._outSums.set(d, sum)
@@ -74,7 +78,7 @@ class RoutingMatrixImpl {
     }
     let cell = this._cells.get(key)
     if (!cell) {
-      const gain = this._ctx.createGain()
+      const gain = _toneCtx().createGain()
       gain.gain.value = level / 100
       srcNode.connect(gain)
       gain.connect(outSum)

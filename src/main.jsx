@@ -36,6 +36,10 @@ if (SAFE_MODE) {
   window.__ONA_METERING_DISABLED = true
 } else {
   console.log('[BOOT] CLEAN START')
+  // Expose benchmark APIs in non-safe mode
+  import('./ui/UIBenchmark').then(m => m.exposeUIBenchAPI()).catch(() => {})
+  import('./live/LiveBenchmark').then(m => m.exposeLiveBenchAPI()).catch(() => {})
+  import('./network/client/NetworkClient').then(m => m.networkClient.exposeConsoleAPI()).catch(() => {})
 }
 
 // ── Crash logging global — renderer ──────────────────────────────────────────

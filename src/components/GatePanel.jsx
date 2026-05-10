@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, memo, useCallback } from 'react'
 import useMixerStore from '../store/mixerStore.js'
 import { audioEngine } from '../audio/audioEngine.js'
 
@@ -45,16 +45,16 @@ function GateIndicator({ channelId }) {
   return <canvas ref={canvasRef} width={200} height={8} style={{ width: '100%', height: 8 }} className="rounded-sm" />
 }
 
-export default function GatePanel({ channelId, channelName, onClose }) {
+function GatePanel({ channelId, channelName, onClose }) {
   const gate       = useMixerStore(s => s.channels.find(c => c.id === channelId)?.gate)
   const updateGate = useMixerStore(s => s.updateChannelGate)
 
-  if (!gate) return null
-
-  const set = (updates) => {
+  const set = useCallback((updates) => {
     updateGate(channelId, updates)
     if (audioEngine.initialized) audioEngine.setChannelGate(channelId, updates)
-  }
+  }, [updateGate, channelId])
+
+  if (!gate) return null
 
   return (
 // DESPUÉS:
@@ -107,3 +107,5 @@ export default function GatePanel({ channelId, channelName, onClose }) {
     </div>
   )
 }
+
+export default memo(GatePanel)

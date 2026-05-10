@@ -8,7 +8,7 @@
  * Inspiración visual: API 550 / SSL / Behringer X32 EQ page
  */
 
-import React from 'react'
+import React, { memo, useCallback } from 'react'
 import EQCurve from './EQCurve.jsx'
 import { EQ_BAND_DEFS } from '../store/mixerStore.js'
 import useMixerStore from '../store/mixerStore.js'
@@ -18,13 +18,12 @@ function formatFreq(hz) {
   return hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)}k` : `${hz}`
 }
 
-function BandControl({ band, def, channelId, bandIndex }) {
-  const updateBand = useMixerStore(s => s.updateChannelEqBand)
-
-  const set = (updates) => {
+// updateBand passed as prop — avoids 7 separate Zustand subscriptions (one per band)
+const BandControl = memo(function BandControl({ band, def, channelId, bandIndex, updateBand }) {
+  const set = useCallback((updates) => {
     updateBand(channelId, band.id, updates)
     audioEngine.setChannelEqBand(channelId, bandIndex, updates)
-  }
+  }, [updateBand, channelId, band.id, bandIndex])
 
   const gainColor = band.gain > 0 ? '#f97316' : band.gain < 0 ? '#60a5fa' : '#737373'
 
@@ -78,19 +77,18 @@ function BandControl({ band, def, channelId, bandIndex }) {
       )}
     </div>
   )
-}
+})
 
-export default function EQPanel({ channelId, channelName, onClose }) {
-  const eqBands = useMixerStore(s => s.channels.find(c => c.id === channelId)?.eqBands ?? [])
-
+function EQPanel({ channelId, channelName, onClose }) {
+  const eqBands    = useMixerStore(s => s.channels.find(c => c.id === channelId)?.eqBands ?? [])
   const updateBand = useMixerStore(s => s.updateChannelEqBand)
 
-  const resetAll = () => {
+  const resetAll = useCallback(() => {
     EQ_BAND_DEFS.forEach((def, i) => {
       updateBand(channelId, def.id, { gain: 0, freq: def.freqDefault, q: def.qDefault })
       audioEngine.setChannelEqBand(channelId, i, { gain: 0, freq: def.freqDefault, q: def.qDefault })
     })
-  }
+  }, [updateBand, channelId])
 
   return (
     // Overlay centrado en pantalla
@@ -145,6 +143,7 @@ export default function EQPanel({ channelId, channelName, onClose }) {
                 def={def}
                 channelId={channelId}
                 bandIndex={i}
+                updateBand={updateBand}
               />
             )
           })}
@@ -153,3 +152,5 @@ export default function EQPanel({ channelId, channelName, onClose }) {
     </div>
   )
 }
+
+export default memo(EQPanel)

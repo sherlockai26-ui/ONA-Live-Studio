@@ -25,7 +25,10 @@
  * útil para dar sensación de tamaño a la sala sin suciedad en transientes.
  */
 
+import * as Tone from 'tone'
 import { clampFeedback, createDenormalKick, ramp } from './FxCpuProtection'
+
+function _toneCtx(): AudioContext { return Tone.getContext() as unknown as AudioContext }
 
 export interface DelayParams {
   time:      number   // 0.001 – 2.0 s
@@ -66,19 +69,20 @@ export class DelayEngine {
 
   constructor(ctx: AudioContext) {
     this._ctx = ctx
+    const nc  = _toneCtx()
 
-    this.input   = ctx.createGain()   // unity summing input
-    this.output  = ctx.createGain()   // unity output
+    this.input   = nc.createGain()   // unity summing input
+    this.output  = nc.createGain()   // unity output
 
-    this._preDelay = ctx.createDelay(0.101)  // 0–100 ms predelay
-    this._delayL   = ctx.createDelay(2.001)
-    this._delayR   = ctx.createDelay(2.001)
-    this._lpfL     = ctx.createBiquadFilter()
-    this._lpfR     = ctx.createBiquadFilter()
-    this._fbGainL  = ctx.createGain()
-    this._fbGainR  = ctx.createGain()
-    this._merger   = ctx.createChannelMerger(2)
-    this._wetGain  = ctx.createGain()
+    this._preDelay = nc.createDelay(0.101)  // 0–100 ms predelay
+    this._delayL   = nc.createDelay(2.001)
+    this._delayR   = nc.createDelay(2.001)
+    this._lpfL     = nc.createBiquadFilter()
+    this._lpfR     = nc.createBiquadFilter()
+    this._fbGainL  = nc.createGain()
+    this._fbGainR  = nc.createGain()
+    this._merger   = nc.createChannelMerger(2)
+    this._wetGain  = nc.createGain()
 
     this._lpfL.type = 'lowpass'
     this._lpfR.type = 'lowpass'
@@ -106,8 +110,8 @@ export class DelayEngine {
     this._wetGain.connect(this.output)
 
     // ── Denormal protection ──────────────────────────────────────────────────
-    this._kickL = createDenormalKick(ctx)
-    this._kickR = createDenormalKick(ctx)
+    this._kickL = createDenormalKick(nc)
+    this._kickR = createDenormalKick(nc)
     this._kickL.node.connect(this._fbGainL)
     this._kickR.node.connect(this._fbGainR)
     this._kickL.start()

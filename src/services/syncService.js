@@ -1,4 +1,13 @@
 /**
+ * @deprecated LEGACY — Reemplazado por src/network/client/NetworkClient.ts (Paso 16)
+ *
+ * Este módulo NO está importado activamente. Se conserva por referencia histórica.
+ * NO usar en código nuevo. Para sync de red usar:
+ *   import networkClient from '../network/client/NetworkClient'
+ *   import { syncService } from '../network/client/NetworkClient'  // compat API
+ *
+ * Clasificación: LEGACY-D (probablemente removible tras confirmar no hay imports)
+ *
  * syncService.js — Command-based Socket.IO client for ONA Live Studio.
  *
  * Architecture (Paso 5 refactor):

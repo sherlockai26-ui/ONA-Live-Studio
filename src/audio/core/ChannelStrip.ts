@@ -79,7 +79,7 @@ class MeterTap {
 
   constructor(ctx?: AudioContext) {
     if (ctx) {
-      const a = ctx.createAnalyser()
+      const a = (Tone.getContext() as any).createAnalyser()
       a.fftSize = 256
       a.smoothingTimeConstant = 0
       this._analyser    = a
@@ -181,7 +181,9 @@ export class ChannelStrip {
 
     if (this._nativeMode) {
       // ── Paso 5: nodos nativos WebAudio ──────────────────────────────────────
-      const c = ctx!
+      // Use Tone.getContext() for node creation so standardized-audio-context tracks them.
+      // ctx (rawCtx) is kept in this._ctx only for AudioParam timing (currentTime).
+      const c = Tone.getContext() as unknown as AudioContext
 
       const ig = c.createGain()
       ig.gain.value = 1
@@ -205,8 +207,7 @@ export class ChannelStrip {
       lpf.Q.value = 0.7
       this._lpf = lpf
 
-      this._trim     = new Tone.Gain(s.trim !== undefined ? Math.pow(10, s.trim / 20) : 1)
-      this._gateNode = new Tone.Gain(1)  // reemplazado por worklet en upgradeGateToWorklet()
+      this._gateNode = c.createGain()  // replaced by worklet in upgradeGateToWorklet()
 
       // Paso 7: DynamicsCompressorNode nativo en lugar de Tone.Compressor
       const dyn = c.createDynamicsCompressor()
@@ -675,7 +676,7 @@ export class ChannelStrip {
     const newMuted    = params.muted    ?? send?.muted    ?? false
 
     if (!send) {
-      const node = this._ctx.createGain()
+      const node = (Tone.getContext() as any).createGain()
       node.gain.value = newMuted ? 0 : newLevel / 100
       ;(newPreFader ? this.preFaderTap as GainNode : this.postFaderTap as GainNode).connect(node)
       node.connect(auxInput)
@@ -713,7 +714,7 @@ export class ChannelStrip {
     const newMuted    = params.muted    ?? send?.muted    ?? false
 
     if (!send) {
-      const node = this._ctx.createGain()
+      const node = (Tone.getContext() as any).createGain()
       node.gain.value = newMuted ? 0 : newLevel / 100
       ;(newPreFader ? this.preFaderTap as GainNode : this.postFaderTap as GainNode).connect(node)
       node.connect(busInput)
@@ -742,7 +743,7 @@ export class ChannelStrip {
     if (!this._ctx) return
     let send = this._groupSends.get(groupId)
     if (!send && active) {
-      const node = this._ctx.createGain()
+      const node = (Tone.getContext() as any).createGain()
       node.gain.value = 1
       ;(this.preFaderTap as GainNode).connect(node)
       node.connect(groupInput)
@@ -762,7 +763,7 @@ export class ChannelStrip {
     if (!this._ctx) return
     if (soloed && cueInput) {
       if (!this._soloNode) {
-        this._soloNode = this._ctx.createGain()
+        this._soloNode = (Tone.getContext() as any).createGain()
         this._soloNode.gain.value = 1
       } else {
         try { this._soloNode.disconnect() } catch (_) {}

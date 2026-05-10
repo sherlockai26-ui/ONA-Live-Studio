@@ -13,11 +13,16 @@
 
 import { engineSingleton } from './core/AudioEngineSingleton'
 import { hal }             from './hardware/HardwareAbstractionLayer'
+import type { EngineSnapshot } from './state/StateEngine'
 
-type Timer = ReturnType<typeof setTimeout>
+type Timer   = ReturnType<typeof setTimeout>
+type SyncFn  = (type: string, channelId: number | null, payload: any) => void
 
 class AudioBridge {
-  private _timers = new Map<string, Timer>()
+  private _timers  = new Map<string, Timer>()
+  private _syncFn: SyncFn | null = null
+
+  setSyncCallback(fn: SyncFn | null): void { this._syncFn = fn }
 
   private _debounce(key: string, ms: number, fn: () => void): void {
     const prev = this._timers.get(key)
@@ -45,18 +50,22 @@ class AudioBridge {
 
   setChannelVolume(id: number, vol: number, muted = false): void {
     engineSingleton.setChannelVolume(id, vol, muted)
+    this._syncFn?.('SET_GAIN', id, { volume: vol, muted })
   }
 
   setChannelPan(id: number, pan: number): void {
     engineSingleton.setChannelPan(id, pan)
+    this._syncFn?.('SET_PAN', id, { pan })
   }
 
   setChannelRouting(id: number, toMain: boolean, toSub: boolean): void {
     engineSingleton.setChannelRouting(id, toMain, toSub)
+    this._syncFn?.('SET_ROUTING', id, { toMain, toSub })
   }
 
   setChannelHpf(id: number, params: { active?: boolean; freq?: number }): void {
     engineSingleton.setChannelHpf(id, params)
+    this._syncFn?.('SET_HPF', id, params)
   }
 
   setChannelLpf(id: number, params: { active?: boolean; freq?: number }): void {
@@ -247,8 +256,8 @@ class AudioBridge {
 
   // ── Master ────────────────────────────────────────────────────────────────────
 
-  setMainVolume(v: number): void { engineSingleton.setMainVolume(v) }
-  setSubVolume(v: number): void  { engineSingleton.setSubVolume(v) }
+  setMainVolume(v: number): void { engineSingleton.setMainVolume(v); this._syncFn?.('SET_MAIN_VOL', null, { volume: v }) }
+  setSubVolume(v: number): void  { engineSingleton.setSubVolume(v);  this._syncFn?.('SET_SUB_VOL', null, { volume: v }) }
 
   /**
    * setGlobalReverb — decay con debounce crítico (300ms).
@@ -256,6 +265,7 @@ class AudioBridge {
    * active y preDelay se aplican inmediatamente.
    */
   setGlobalReverb(params: { active?: boolean; decay?: number; preDelay?: number }): void {
+    this._syncFn?.('SET_REVERB', null, params)
     const { decay, ...rest } = params
     if (Object.keys(rest).length > 0) engineSingleton.setGlobalReverb(rest)
     if (decay !== undefined) {
@@ -267,6 +277,7 @@ class AudioBridge {
 
   setGlobalDelay(params: { active?: boolean; time?: number; feedback?: number }): void {
     engineSingleton.setGlobalDelay(params)
+    this._syncFn?.('SET_DELAY', null, params)
   }
 
   setFxReturn(params: { volume?: number; muted?: boolean }): void {
@@ -325,6 +336,33 @@ class AudioBridge {
   getHalLatency() { return hal.getLatency() }
   getHalSampleRate(): number { return hal.getSampleRate() }
   isChannelConnected(channelId: number): boolean { return hal.isChannelConnected(channelId) }
+
+  // ── Scene recall (Paso 18) ────────────────────────────────────────────────────
+
+  /**
+   * Apply a full EngineSnapshot to the DSP engine.
+   * Called by SceneEngine._applyDSP callback — applies each channel parameter
+   * individually so TransitionEngine can intercept per-channel ramps.
+   */
+  applyEngineSnapshot(snapshot: EngineSnapshot): void {
+    if (!this.initialized) return
+    for (const ch of snapshot.channels) {
+      engineSingleton.setChannelVolume(ch.id, ch.volume, ch.muted)
+      engineSingleton.setChannelPan(ch.id, ch.pan)
+      engineSingleton.setChannelRouting(ch.id, ch.toMain, ch.toSub)
+      engineSingleton.setChannelHpf(ch.id, ch.hpf)
+      engineSingleton.setChannelGate(ch.id, ch.gate)
+      engineSingleton.setChannelCompressor(ch.id, ch.compressor)
+      ch.eqBands.forEach((band, i) => engineSingleton.setChannelEqBand(ch.id, i, band))
+      engineSingleton.setChannelReverbSend(ch.id, ch.reverbSend)
+      engineSingleton.setChannelDelaySend(ch.id, ch.delaySend)
+    }
+    engineSingleton.setMainVolume(snapshot.buses.mainVolume)
+    engineSingleton.setSubVolume(snapshot.buses.subVolume)
+    engineSingleton.setGlobalReverb(snapshot.fx.reverb)
+    engineSingleton.setGlobalDelay(snapshot.fx.delay)
+    engineSingleton.setFxReturn(snapshot.fx.fxReturn)
+  }
 }
 
 export const audioBridge = new AudioBridge()

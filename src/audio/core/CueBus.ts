@@ -13,6 +13,10 @@
  *   cue.fader → RoutingMatrix → salida monitora
  */
 
+import * as Tone from 'tone'
+
+function _toneCtx() { return Tone.getContext() as unknown as AudioContext }
+
 export type CueMode = 'pfl' | 'afl'
 
 export interface CueState {
@@ -38,9 +42,10 @@ class CueBusImpl {
 
   initialize(ctx: AudioContext): void {
     this._ctx     = ctx
-    this._input   = ctx.createGain()
-    this._fader   = ctx.createGain()
-    this._analyser = ctx.createAnalyser()
+    const nc      = _toneCtx()
+    this._input   = nc.createGain()
+    this._fader   = nc.createGain()
+    this._analyser = nc.createAnalyser()
     this._analyser.fftSize               = ANALYSER_FFT_CUE
     this._analyser.smoothingTimeConstant = 0
     this._peakBuf  = new Float32Array(ANALYSER_FFT_CUE)

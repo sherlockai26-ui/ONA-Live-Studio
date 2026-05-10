@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, memo, useCallback } from 'react'
 import useMixerStore from '../store/mixerStore.js'
 import { audioEngine } from '../audio/audioEngine.js'
 
@@ -45,16 +45,16 @@ function GRMeter({ channelId }) {
   return <canvas ref={canvasRef} width={200} height={8} style={{ width: '100%', height: 8 }} className="rounded-sm" />
 }
 
-export default function CompPanel({ channelId, channelName, onClose }) {
+function CompPanel({ channelId, channelName, onClose }) {
   const comp       = useMixerStore(s => s.channels.find(c => c.id === channelId)?.compressor)
   const updateComp = useMixerStore(s => s.updateChannelComp)
 
-  if (!comp) return null
-
-  const set = (updates) => {
+  const set = useCallback((updates) => {
     updateComp(channelId, updates)
     if (audioEngine.initialized) audioEngine.setChannelCompressor(channelId, updates)
-  }
+  }, [updateComp, channelId])
+
+  if (!comp) return null
 
   return (
 // DESPUÉS:
@@ -111,3 +111,5 @@ export default function CompPanel({ channelId, channelName, onClose }) {
     </div>
   )
 }
+
+export default memo(CompPanel)

@@ -85,7 +85,10 @@ function createWindow() {
             "default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
             "worker-src 'self' blob:",
-            "connect-src 'self' blob: ws://localhost:* wss://localhost:* http://localhost:* http://localhost:3000",
+            // http: and ws: allow all private LAN / hotspot IPs (192.168.x, 10.x, 172.16.x)
+            // CSP does not support IP wildcards — scheme-only sources are the correct approach
+            // for a desktop audio app that auto-discovers servers on the local network.
+            "connect-src 'self' blob: http: ws: wss:",
             "media-src 'self' blob: mediastream:",
             "img-src 'self' data: blob:",
             "font-src 'self' data:",

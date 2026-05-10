@@ -1,13 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback, memo } from 'react'
+import { shallow } from 'zustand/shallow'
 import EQPanel      from './EQPanel.jsx'
 import CompPanel    from './CompPanel.jsx'
 import GatePanel    from './GatePanel.jsx'
-import ChannelMeter from './ChannelMeter.jsx'
+import { ProFader }     from '../ui/ProFader'
+import { ConsoleMeter } from '../ui/ConsoleMeter'
 import useMixerStore from '../store/mixerStore.js'
 import { audioEngine } from '../audio/audioEngine.js'
 
-export default function Channel({ channelId, inputList }) {
-  const channel          = useMixerStore(s => s.channels.find(c => c.id === channelId))
+function Channel({ channelId, inputList }) {
+  // shallow prevents re-renders when OTHER channels change in the array
+  const channel          = useMixerStore(s => s.channels.find(c => c.id === channelId), shallow)
   const updateChannel    = useMixerStore(s => s.updateChannel)
   const updateChannelHpf = useMixerStore(s => s.updateChannelHpf)
 
@@ -93,11 +96,22 @@ export default function Channel({ channelId, inputList }) {
 
         {/* Meter + Fader lado a lado */}
         <div className="flex items-end gap-2 px-1">
-          <ChannelMeter channelId={channelId} width={10} height={80} />
-          <input
-            type="range" min={0} max={100} value={volume}
-            onChange={e => set({ volume: Number(e.target.value) })}
-            style={{ writingMode: 'vertical-lr', direction: 'rtl', width: '24px', height: '80px' }}
+          <ConsoleMeter
+            channelId={channelId}
+            getLevel={() => {
+              if (!audioEngine.initialized) return 0
+              try { return audioEngine.getMeterBuffer()[channelId - 1] ?? 0 } catch { return 0 }
+            }}
+            width={10}
+            height={80}
+          />
+          <ProFader
+            value={volume}
+            onChange={v => set({ volume: Math.round(v) })}
+            height={80}
+            width={24}
+            liveUpdate
+            data-ch={channelId}
           />
         </div>
 
@@ -211,25 +225,25 @@ export default function Channel({ channelId, inputList }) {
           SOLO
         </button>
 
-        {/* Routing M / S */}
+        {/* Routing MAIN / SUB */}
         <div className="flex gap-1 mt-0.5">
           <button
             onClick={() => set({ toMain: !toMain })}
             title="Enviar a Main Mix"
-            className={`text-[9px] font-bold w-10 py-0.5 rounded transition-colors ${
+            className={`text-[8px] font-bold w-11 py-0.5 rounded transition-colors ${
               toMain ? 'bg-[#f97316] text-black' : 'bg-[#2a2a2a] text-[#737373]'
             }`}
           >
-            M
+            MAIN
           </button>
           <button
             onClick={() => set({ toSub: !toSub })}
             title="Enviar a Sub 1-2"
-            className={`text-[9px] font-bold w-10 py-0.5 rounded transition-colors ${
+            className={`text-[8px] font-bold w-11 py-0.5 rounded transition-colors ${
               toSub ? 'bg-[#3b82f6] text-white' : 'bg-[#2a2a2a] text-[#737373]'
             }`}
           >
-            S
+            SUB
           </button>
         </div>
       </div>
@@ -240,3 +254,7 @@ export default function Channel({ channelId, inputList }) {
     </>
   )
 }
+
+// memo: evita re-renders cuando el padre re-renderiza pero channelId/inputList no cambian.
+// shallow en el selector de arriba: evita re-renders cuando OTROS canales cambian en el array.
+export default memo(Channel)

@@ -8,9 +8,12 @@ import VirtualSoundcheck from './components/VirtualSoundcheck.jsx'
 import useMixerStore     from './store/mixerStore.js'
 import { audioEngine }   from './audio/audioEngine.js'
 import { useDevices }    from './hooks/useDevices.js'
+import networkClient     from './network/client/NetworkClient'
+import { uiFailsafe }    from './ui/UIFailsafe'
+import { sceneEngine }   from './live/SceneEngine'
+import './ui/console.css'
 
 // Safe Mode: detectado en main.jsx y propagado a window.__ONA_SAFE_MODE
-// También puede venir de window.ona.safeMode (flag CLI --safe-mode)
 const SAFE_MODE = window.__ONA_SAFE_MODE === true || window.ona?.safeMode === true
 
 export default function App() {
@@ -39,7 +42,22 @@ export default function App() {
         setEngineReady(true)
         setInitError(null)
         console.log('[BOOT] AudioEngine listo')
-        // Ahora que Tone.start() creó el AudioContext, getUserMedia es seguro
+
+        // Wire SceneEngine DSP callback — applies recalled scene to both DSP + store
+        sceneEngine.setApplyDSPCallback(async (snapshot) => {
+          audioEngine.applyEngineSnapshot(snapshot)
+          useMixerStore.getState().loadFullState({
+            channels:   snapshot.channels,
+            mainVolume: snapshot.buses.mainVolume,
+            subVolume:  snapshot.buses.subVolume,
+            fx:         snapshot.fx,
+          })
+        })
+
+        // Start adaptive UI quality monitoring (Paso 17)
+        uiFailsafe.start()
+
+        // getUserMedia is safe after Tone.start() creates the AudioContext
         refreshDeviceLabels().catch(() => {})
       } catch (err) {
         console.error('[BOOT] AudioEngine FAILED:', err)
@@ -54,42 +72,84 @@ export default function App() {
     return () => window.removeEventListener('click', handler)
   }, [])
 
-  // ── Sync multi-dispositivo (solo si engine listo y no safe mode) ─────────
+  // ── Networking multi-dispositivo (solo si engine listo y no safe mode) ────
   useEffect(() => {
     if (!engineReady || SAFE_MODE) return
 
-    let syncService
-    let unsub      = () => {}
-    let unsubStore = () => {}
+    let unsubCmd  = () => {}
+    let unsubSync = () => {}
 
-    const connectSync = async () => {
+    const connectNetwork = async () => {
       try {
-        const mod = await import('./services/syncService.js')
-        syncService = mod.syncService
-        syncService.connect()
-        unsub = syncService.onState((remoteState) => {
+        // Wire outgoing: AudioBridge → networkClient (sync suppresses echo)
+        audioEngine.setSyncCallback((type, channelId, payload) => {
           if (syncRef.current) return
-          loadFullState(remoteState)
+          networkClient.sendCommand(type, channelId, payload)
         })
-        unsubStore = useMixerStore.subscribe((state) => {
-          if (!syncService?.connected) return
+
+        // Wire incoming: remote commands → store + engine
+        unsubCmd = networkClient.onCommand((cmd) => {
+          const { type, channelId: ch, payload } = cmd
           syncRef.current = true
-          syncService.emit({
-            channels:   state.channels,
-            mainVolume: state.mainVolume,
-            subVolume:  state.subVolume,
-            fx:         state.fx,
-          })
-          requestAnimationFrame(() => { syncRef.current = false })
+          try {
+            switch (type) {
+              case 'SET_GAIN':
+                useMixerStore.getState().updateChannel(ch, { volume: payload.volume, muted: payload.muted })
+                if (audioEngine.initialized) audioEngine.setChannelVolume(ch, payload.volume, payload.muted)
+                break
+              case 'SET_PAN':
+                useMixerStore.getState().updateChannel(ch, { pan: payload.pan })
+                if (audioEngine.initialized) audioEngine.setChannelPan(ch, payload.pan)
+                break
+              case 'SET_ROUTING':
+                useMixerStore.getState().updateChannel(ch, { toMain: payload.toMain, toSub: payload.toSub })
+                if (audioEngine.initialized) audioEngine.setChannelRouting(ch, payload.toMain, payload.toSub)
+                break
+              case 'SET_HPF':
+                useMixerStore.getState().updateChannelHpf(ch, payload)
+                if (audioEngine.initialized) audioEngine.setChannelHpf(ch, payload)
+                break
+              case 'SET_MAIN_VOL':
+                useMixerStore.getState().setMainVolume(payload.volume)
+                if (audioEngine.initialized) audioEngine.setMainVolume(payload.volume)
+                break
+              case 'SET_SUB_VOL':
+                useMixerStore.getState().setSubVolume(payload.volume)
+                if (audioEngine.initialized) audioEngine.setSubVolume(payload.volume)
+                break
+              case 'SET_REVERB':
+                useMixerStore.getState().updateFx('reverb', payload)
+                if (audioEngine.initialized) audioEngine.setGlobalReverb(payload)
+                break
+              case 'SET_DELAY':
+                useMixerStore.getState().updateFx('delay', payload)
+                if (audioEngine.initialized) audioEngine.setGlobalDelay(payload)
+                break
+            }
+          } finally {
+            requestAnimationFrame(() => { syncRef.current = false })
+          }
         })
-        console.log('[BOOT] Sync conectado')
-      } catch (_) {
-        // Servidor no disponible — modo standalone
+
+        // Full state sync on reconnect
+        unsubSync = networkClient.onStateSync((data) => {
+          if (!syncRef.current) loadFullState(data.state)
+        })
+
+        // Auto-discover server; standalone mode if not found
+        networkClient.connectAuto().catch(() => {})
+        console.log('[BOOT] NetworkClient wired')
+      } catch (err) {
+        console.warn('[BOOT] Network setup failed — standalone mode:', err)
       }
     }
 
-    connectSync()
-    return () => { unsub(); unsubStore() }
+    connectNetwork()
+    return () => {
+      unsubCmd()
+      unsubSync()
+      audioEngine.setSyncCallback(null)
+    }
   }, [engineReady, loadFullState])
 
   // ── Header info ───────────────────────────────────────────────────────────

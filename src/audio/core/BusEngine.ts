@@ -14,9 +14,11 @@
 
 import * as Tone from 'tone'
 
-// Reemplaza Tone.Volume / Tone.Meter — ctx disponible tras Tone.start()
+// Tone.getContext() en vez de rawContext: los nodos creados via rawCtx
+// no quedan registrados en standardized-audio-context, causando
+// "A value with the given key could not be found" al conectarlos.
 function getRawCtx(): AudioContext {
-  return (Tone.context as any).rawContext as AudioContext
+  return Tone.getContext() as unknown as AudioContext
 }
 
 function volToDb(v: number): number  { return v <= 0 ? -Infinity : 20 * Math.log10(v / 100) }

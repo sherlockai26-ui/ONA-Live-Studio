@@ -35,7 +35,10 @@
  *   el usuario necesita convolución de IR (> 1s) o más de 8 reverbs simultáneas.
  */
 
+import * as Tone from 'tone'
 import { clampFeedback, createDenormalKick, ramp } from './FxCpuProtection'
+
+function _toneCtx(): AudioContext { return Tone.getContext() as unknown as AudioContext }
 
 export interface ReverbParams {
   roomSize:  number   // 0 – 100
@@ -77,16 +80,17 @@ export class ReverbEngine {
 
   constructor(ctx: AudioContext) {
     this._ctx = ctx
+    const nc  = _toneCtx()
     const sr  = ctx.sampleRate
 
-    this.input   = ctx.createGain()
-    this.output  = ctx.createGain()
+    this.input   = nc.createGain()
+    this.output  = nc.createGain()
 
-    this._preDelay = ctx.createDelay(0.101)
-    this._combSum  = ctx.createGain()
+    this._preDelay = nc.createDelay(0.101)
+    this._combSum  = nc.createGain()
     this._combSum.gain.value = 1 / COMB_SAMPLES_44100.length  // normalize sum
-    this._allpass  = ctx.createBiquadFilter()
-    this._wetGain  = ctx.createGain()
+    this._allpass  = nc.createBiquadFilter()
+    this._wetGain  = nc.createGain()
 
     // Allpass approximation: BiquadFilter type 'allpass' with flat magnitude
     // Q = 0.7 → very mild diffusion, no resonance risk
@@ -97,10 +101,10 @@ export class ReverbEngine {
     // ── Build comb filters ────────────────────────────────────────────────────
     this._combs = COMB_SAMPLES_44100.map((samples) => {
       const delayTime = samples / 44100 * (sr / 44100)  // scale to actual sampleRate
-      const delay  = ctx.createDelay(delayTime * 2 + 0.001)  // +headroom
-      const lpf    = ctx.createBiquadFilter()
-      const fbGain = ctx.createGain()
-      const kick   = createDenormalKick(ctx)
+      const delay  = nc.createDelay(delayTime * 2 + 0.001)  // +headroom
+      const lpf    = nc.createBiquadFilter()
+      const fbGain = nc.createGain()
+      const kick   = createDenormalKick(nc)
 
       lpf.type = 'lowpass'
 

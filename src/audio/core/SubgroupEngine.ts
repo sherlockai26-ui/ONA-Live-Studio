@@ -11,6 +11,10 @@
  * Subgroup output puede ir a main, sub, o ambos.
  */
 
+import * as Tone from 'tone'
+
+function _toneCtx() { return Tone.getContext() as unknown as AudioContext }
+
 export const NUM_GROUPS   = 4
 const GROUP_LABELS        = ['Drums', 'Vocals', 'Music', 'FX Grp']
 const ANALYSER_FFT_GRP    = 256
@@ -42,12 +46,13 @@ class SubgroupEngineImpl {
 
   initialize(ctx: AudioContext, mainIn: GainNode, subIn: GainNode): void {
     this._ctx = ctx
+    const nc  = _toneCtx()
     for (let i = 1; i <= NUM_GROUPS; i++) {
-      const input    = ctx.createGain()
-      const fader    = ctx.createGain()
-      const tm       = ctx.createGain()
-      const ts       = ctx.createGain()
-      const analyser = ctx.createAnalyser()
+      const input    = nc.createGain()
+      const fader    = nc.createGain()
+      const tm       = nc.createGain()
+      const ts       = nc.createGain()
+      const analyser = nc.createAnalyser()
       analyser.fftSize               = ANALYSER_FFT_GRP
       analyser.smoothingTimeConstant = 0
       input.gain.value = 1

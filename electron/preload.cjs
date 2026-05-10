@@ -1,5 +1,4 @@
 const { contextBridge, ipcRenderer } = require('electron')
-const path = require('path')
 
 // Safe Mode: detectado en main.cjs y pasado como additionalArgument
 const SAFE_MODE = process.argv.includes('--safe-mode')
@@ -73,18 +72,19 @@ contextBridge.exposeInMainWorld('onaRecording', {
 ;(function loadNativeDSP() {
   if (SAFE_MODE) return  // No cargar módulo nativo en safe mode
 
-  // Buscar el .node compilado (plataforma-específico, generado por napi build)
-  const platform = process.platform   // 'win32' | 'darwin' | 'linux'
-  const arch     = process.arch       // 'x64' | 'arm64'
-  const abi      = process.platform === 'win32' ? 'msvc' : 'gnu'
-  const nodeName = `ona-dsp-engine.${platform}-${arch}-${abi}.node`
-  const nodePath = path.join(__dirname, '..', 'native', nodeName)
-
+  // __dirname no está disponible en preloads sandboxed (Electron v20+ sandbox por defecto).
+  // Envolvemos todo en try-catch para que un fallo no interrumpa el script.
   let nativeMod
   try {
+    const platform = process.platform   // 'win32' | 'darwin' | 'linux'
+    const arch     = process.arch       // 'x64' | 'arm64'
+    const abi      = process.platform === 'win32' ? 'msvc' : 'gnu'
+    const nodeName = `ona-dsp-engine.${platform}-${arch}-${abi}.node`
+    // __dirname puede no existir en sandbox — si lanza ReferenceError lo atrapa el catch externo.
+    const nodePath = `${__dirname}/../native/${nodeName}`
     nativeMod = require(nodePath)
   } catch (_) {
-    // Módulo no compilado — NativeDSPBridge usará WebAudio fallback automáticamente
+    // Módulo no compilado o __dirname no disponible — NativeDSPBridge usa WebAudio fallback
     return
   }
 

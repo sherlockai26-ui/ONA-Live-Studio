@@ -29,6 +29,9 @@ const MOMENTARY_POLLS  = 4   // 4 × 100ms = 400ms
 const SHORTTERM_POLLS  = 30  // 30 × 100ms = 3s
 const POLL_INTERVAL_MS = 100
 
+import * as Tone from 'tone'
+function _toneCtx(): AudioContext { return Tone.getContext() as unknown as AudioContext }
+
 export interface LoudnessReading {
   momentaryLufs:  number   // -Infinity or dBFS
   shortTermLufs:  number
@@ -58,25 +61,26 @@ class LoudnessMeterInstance {
 
   constructor(ctx: AudioContext) {
     this._ctx = ctx
+    const nc  = _toneCtx()
 
     // Input gain (unity — connection point)
-    this.input = ctx.createGain()
+    this.input = nc.createGain()
     this.input.gain.value = 1
 
     // K-weighting Stage 1: high-shelf +4dB @ 1500Hz
-    this._stage1 = ctx.createBiquadFilter()
+    this._stage1 = nc.createBiquadFilter()
     this._stage1.type            = 'highshelf'
     this._stage1.frequency.value = 1500
     this._stage1.gain.value      = 4.0
 
     // K-weighting Stage 2: high-pass @ 38Hz (RLB)
-    this._stage2 = ctx.createBiquadFilter()
+    this._stage2 = nc.createBiquadFilter()
     this._stage2.type            = 'highpass'
     this._stage2.frequency.value = 38
     this._stage2.Q.value         = 0.5
 
     // Analyser for RMS computation
-    this._analyser = ctx.createAnalyser()
+    this._analyser = nc.createAnalyser()
     this._analyser.fftSize               = 2048
     this._analyser.smoothingTimeConstant = 0
 

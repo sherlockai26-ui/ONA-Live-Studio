@@ -1646,7 +1646,10 @@ class AudioEngineSingleton {
 
   private _scheduleReverbDecay(decay: number): void {
     if (this._reverbGenerating) { this._reverbDecayPending = decay; return }
-    this._applyReverbDecay(decay)
+    // Defer to next event loop turn so the current RAF frame is never blocked.
+    // Tone.Reverb IR generation (OfflineAudioContext) is async but has synchronous
+    // setup cost; this keeps init and first-frame rendering spike-free.
+    setTimeout(() => this._applyReverbDecay(decay), 0)
   }
 
   private _applyReverbDecay(decay: number): void {

@@ -212,7 +212,7 @@ class NetworkClient {
       connect:    (url?: string) => { this.connect(url ?? 'http://localhost:3000'); console.log(`[PASO 16] connecting to ${url ?? 'localhost:3000'}`) },
       connectAuto: async () => {
         console.log('[PASO 16] discovering server...')
-        const ok = await this.connectAuto((tried, total) => process?.stdout?.write?.(`\r  probing ${tried}/${total}...`))
+        const ok = await this.connectAuto((tried, total) => console.log(`[PASO 16] probing ${tried}/${total}...`))
         console.log(ok ? `[PASO 16] connected: ${discoveryClient.getLastFound()?.url}` : '[PASO 16] server not found')
         return ok
       },

@@ -39,10 +39,15 @@ const app    = express()
 const server = http.createServer(app)
 app.use(express.json())
 
-// COOP/COEP headers — required for SharedArrayBuffer (Paso 15 multicore)
+// CORS — allow Electron renderer (localhost:5173) and LAN remote clients to reach HTTP routes.
+// Cross-Origin-Resource-Policy: cross-origin is also set so that Chromium renderers with
+// COEP enabled can load these resources (required when SAB cross-origin isolation is active).
 app.use((_req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy',   'same-origin')
-  res.setHeader('Cross-Origin-Embedder-Policy',  'require-corp')
+  res.setHeader('Access-Control-Allow-Origin',  '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+  if (_req.method === 'OPTIONS') { res.sendStatus(204); return }
   next()
 })
 

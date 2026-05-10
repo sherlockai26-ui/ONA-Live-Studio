@@ -10,6 +10,12 @@
  * bus.fader es el nodo de salida — conectar a RoutingMatrix para audición.
  */
 
+import * as Tone from 'tone'
+
+// Nodes must be created via Tone.getContext() so standardized-audio-context tracks them.
+// rawCtx.createGain() bypasses the registry → "key not found" on connect.
+function _toneCtx() { return Tone.getContext() as unknown as AudioContext }
+
 export const NUM_AUX   = 8
 const AUX_LABELS       = ['Aux 1','Aux 2','Aux 3','Aux 4','Aux 5','Aux 6','Aux 7','Aux 8']
 const ANALYSER_FFT_AUX = 256
@@ -37,10 +43,11 @@ class AuxBusEngineImpl {
 
   initialize(ctx: AudioContext): void {
     this._ctx = ctx
+    const nc = _toneCtx()
     for (let i = 1; i <= NUM_AUX; i++) {
-      const input    = ctx.createGain()
-      const fader    = ctx.createGain()
-      const analyser = ctx.createAnalyser()
+      const input    = nc.createGain()
+      const fader    = nc.createGain()
+      const analyser = nc.createAnalyser()
       analyser.fftSize               = ANALYSER_FFT_AUX
       analyser.smoothingTimeConstant = 0
       input.gain.value  = 1
