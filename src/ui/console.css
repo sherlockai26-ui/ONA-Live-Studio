@@ -1,0 +1,328 @@
+/* ONA Live Studio — Dark Live Console Theme */
+/* Import in main.jsx or App.jsx: import './ui/console.css' */
+
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+:root {
+  /* Surface */
+  --ona-bg-deep:       #0a0a0c;
+  --ona-bg-console:    #111115;
+  --ona-bg-channel:    #18181e;
+  --ona-bg-panel:      #1c1c24;
+  --ona-bg-elevated:   #242430;
+  --ona-bg-hover:      #2a2a38;
+
+  /* Border */
+  --ona-border:        rgba(255, 255, 255, 0.06);
+  --ona-border-strong: rgba(255, 255, 255, 0.12);
+  --ona-border-focus:  #4ade80;
+
+  /* Text */
+  --ona-text-primary:  #e5e7eb;
+  --ona-text-secondary:#9ca3af;
+  --ona-text-muted:    #4b5563;
+  --ona-text-label:    #6b7280;
+
+  /* Accent */
+  --ona-green:         #4ade80;
+  --ona-green-dim:     #166534;
+  --ona-yellow:        #eab308;
+  --ona-orange:        #f97316;
+  --ona-red:           #ef4444;
+  --ona-red-dim:       #7f1d1d;
+  --ona-blue:          #60a5fa;
+  --ona-purple:        #a78bfa;
+
+  /* Fader */
+  --fader-thumb:         #d1d5db;
+  --fader-thumb-active:  #f9fafb;
+  --fader-thumb-disabled:#374151;
+  --fader-fill:          #4ade80;
+  --fader-mark:          rgba(255, 255, 255, 0.2);
+  --fader-db-color:      #6b7280;
+  --fader-track:         #1f2937;
+
+  /* Meter */
+  --meter-clip:          #ef4444;
+  --meter-peak-hold:     rgba(255, 255, 255, 0.8);
+
+  /* Knob */
+  --knob-ring:           #374151;
+  --knob-fill:           #4ade80;
+  --knob-bg:             #1f2937;
+
+  /* Shadows */
+  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.6);
+  --shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.7);
+
+  /* Radius */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Transitions */
+  --transition-fast: 80ms ease;
+  --transition-mid:  160ms ease;
+}
+
+/* ── Reset for console UI ────────────────────────────────────────────────── */
+.ona-console * {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Console layout ──────────────────────────────────────────────────────── */
+.console-layout {
+  display:         flex;
+  height:          100%;
+  background:      var(--ona-bg-deep);
+  color:           var(--ona-text-primary);
+  font-family:     'Inter', 'SF Pro Display', system-ui, sans-serif;
+  font-size:       12px;
+  overflow:        hidden;
+}
+
+.console-layout__channels {
+  flex:     1;
+  overflow: hidden;
+  display:  flex;
+  flex-direction: column;
+}
+
+.console-layout__panel {
+  background:  var(--ona-bg-panel);
+  border-left: 1px solid var(--ona-border);
+  overflow-y:  auto;
+  flex-shrink: 0;
+  transition:  width var(--transition-mid);
+}
+
+.console-layout--foh .console-layout__master {
+  width:        120px;
+  background:   var(--ona-bg-channel);
+  border-left:  1px solid var(--ona-border-strong);
+  flex-shrink:  0;
+}
+
+.console-layout--phone {
+  flex-direction: column;
+}
+
+.console-layout--phone .console-layout__panel--bottom {
+  height:          240px;
+  border-top:      1px solid var(--ona-border);
+  border-left:     none;
+}
+
+.console-layout__bottom-nav {
+  display:         flex;
+  background:      var(--ona-bg-elevated);
+  border-top:      1px solid var(--ona-border);
+  padding:         4px;
+  gap:             4px;
+}
+
+.console-layout__bottom-nav button {
+  flex:            1;
+  padding:         8px;
+  background:      transparent;
+  border:          1px solid var(--ona-border);
+  border-radius:   var(--radius-sm);
+  color:           var(--ona-text-secondary);
+  font-size:       12px;
+  cursor:          pointer;
+}
+
+.console-layout__bottom-nav button:active {
+  background: var(--ona-bg-hover);
+  color:      var(--ona-text-primary);
+}
+
+/* ── Virtual channel list ────────────────────────────────────────────────── */
+.virtual-channel-list {
+  scrollbar-width:   thin;
+  scrollbar-color:   var(--ona-border-strong) transparent;
+}
+
+.virtual-channel-list::-webkit-scrollbar { height: 4px }
+.virtual-channel-list::-webkit-scrollbar-track { background: transparent }
+.virtual-channel-list::-webkit-scrollbar-thumb {
+  background:    var(--ona-border-strong);
+  border-radius: 2px;
+}
+
+/* ── Channel strip ───────────────────────────────────────────────────────── */
+.channel-strip {
+  display:         flex;
+  flex-direction:  column;
+  align-items:     center;
+  height:          100%;
+  background:      var(--ona-bg-channel);
+  border-right:    1px solid var(--ona-border);
+  padding:         6px 4px;
+  gap:             4px;
+  position:        relative;
+  transition:      background var(--transition-fast);
+  user-select:     none;
+}
+
+.channel-strip:hover {
+  background: var(--ona-bg-hover);
+}
+
+.channel-strip--muted {
+  opacity: 0.45;
+}
+
+.channel-strip--solo {
+  background: var(--ona-green-dim);
+}
+
+.channel-strip__label {
+  font-size:      10px;
+  font-weight:    600;
+  color:          var(--ona-text-label);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align:     center;
+  width:          100%;
+  overflow:       hidden;
+  text-overflow:  ellipsis;
+  white-space:    nowrap;
+}
+
+.channel-strip__number {
+  font-size:   10px;
+  color:       var(--ona-text-muted);
+  text-align:  center;
+}
+
+/* ── ProFader ────────────────────────────────────────────────────────────── */
+.pro-fader {
+  display:        flex;
+  flex-direction: column;
+  align-items:    center;
+  gap:            4px;
+}
+
+.pro-fader__label {
+  font-size:      9px;
+  color:          var(--ona-text-muted);
+  text-align:     center;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pro-fader__track {
+  background:  var(--fader-track);
+  border-radius: var(--radius-sm);
+  position:    relative;
+  cursor:      ns-resize;
+}
+
+.pro-fader__track::before {
+  content:     '';
+  position:    absolute;
+  left:        50%;
+  top:         0;
+  bottom:      0;
+  width:       2px;
+  transform:   translateX(-50%);
+  background:  var(--ona-border);
+  border-radius: 1px;
+}
+
+.pro-fader__thumb {
+  transition: background var(--transition-fast);
+}
+
+.pro-fader__thumb:hover {
+  background: var(--fader-thumb-active) !important;
+}
+
+.pro-fader--disabled .pro-fader__track {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ── Console meter ───────────────────────────────────────────────────────── */
+.console-meter {
+  border-radius: var(--radius-sm);
+  background:    #0d1117;
+  box-shadow:    inset 0 0 2px rgba(0,0,0,0.8);
+}
+
+/* ── Mute / Solo buttons ─────────────────────────────────────────────────── */
+.btn-mute,
+.btn-solo {
+  width:         100%;
+  padding:       3px 0;
+  border:        none;
+  border-radius: var(--radius-sm);
+  font-size:     9px;
+  font-weight:   700;
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  cursor:        pointer;
+  transition:    background var(--transition-fast), color var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-mute {
+  background: var(--ona-bg-elevated);
+  color:      var(--ona-text-muted);
+}
+
+.btn-mute.active {
+  background: var(--ona-orange);
+  color:      #000;
+}
+
+.btn-solo {
+  background: var(--ona-bg-elevated);
+  color:      var(--ona-text-muted);
+}
+
+.btn-solo.active {
+  background: var(--ona-yellow);
+  color:      #000;
+}
+
+/* ── Panel headers ───────────────────────────────────────────────────────── */
+.panel-header {
+  padding:       8px 12px;
+  font-size:     11px;
+  font-weight:   600;
+  color:         var(--ona-text-secondary);
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  border-bottom: 1px solid var(--ona-border);
+  display:       flex;
+  align-items:   center;
+  justify-content: space-between;
+}
+
+/* ── Scrollbars (global dark) ────────────────────────────────────────────── */
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ona-border-strong) transparent;
+}
+::-webkit-scrollbar        { width: 6px; height: 6px }
+::-webkit-scrollbar-track  { background: transparent }
+::-webkit-scrollbar-thumb  { background: var(--ona-border-strong); border-radius: 3px }
+::-webkit-scrollbar-thumb:hover { background: var(--ona-text-muted) }
+
+/* ── Touch guard ─────────────────────────────────────────────────────────── */
+.touch-guard {
+  height: 100%;
+  width:  100%;
+}
+
+/* ── Utility ─────────────────────────────────────────────────────────────── */
+.ona-sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+}

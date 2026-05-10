@@ -94,10 +94,11 @@ export default function EQPanel({ channelId, channelName, onClose }) {
 
   return (
     // Overlay centrado en pantalla
+// DESPUÉS:
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
         className="bg-[#141414] border border-[#2a2a2a] rounded-xl shadow-2xl p-4"

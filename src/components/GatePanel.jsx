@@ -25,16 +25,19 @@ function GateIndicator({ channelId }) {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
+    if (!ctx) return
     const W = canvas.width, H = canvas.height
 
     const unsub = audioEngine.onMeterUpdate((data) => {
-      const level = data[`gate_${channelId}`] ?? 1
-      ctx.clearRect(0, 0, W, H)
-      ctx.fillStyle = '#111'
-      ctx.fillRect(0, 0, W, H)
-      const barW = level * W
-      ctx.fillStyle = level > 0.5 ? '#22c55e' : level > 0.1 ? '#eab308' : '#ef4444'
-      ctx.fillRect(0, 0, barW, H)
+      try {
+        const level = data[`gate_${channelId}`] ?? 1
+        const barW  = Math.max(0, Math.min(1, level)) * W
+        ctx.clearRect(0, 0, W, H)
+        ctx.fillStyle = '#111'
+        ctx.fillRect(0, 0, W, H)
+        ctx.fillStyle = level > 0.5 ? '#22c55e' : level > 0.1 ? '#eab308' : '#ef4444'
+        ctx.fillRect(0, 0, barW, H)
+      } catch (_) {}
     })
     return unsub
   }, [channelId])
@@ -54,10 +57,11 @@ export default function GatePanel({ channelId, channelName, onClose }) {
   }
 
   return (
+// DESPUÉS:
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.8)' }}
-      onClick={onClose}
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
         className="bg-[#141414] border border-[#2a2a2a] rounded-lg p-5 w-96 shadow-2xl"

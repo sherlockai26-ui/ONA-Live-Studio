@@ -25,17 +25,19 @@ function GRMeter({ channelId }) {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
+    if (!ctx) return
     const W = canvas.width, H = canvas.height
 
     const unsub = audioEngine.onMeterUpdate((data) => {
-      const gr = Math.abs(data[`gr_${channelId}`] ?? 0)
-      ctx.clearRect(0, 0, W, H)
-      ctx.fillStyle = '#111'
-      ctx.fillRect(0, 0, W, H)
-      const frac  = Math.min(gr / 30, 1)
-      const barW  = frac * W
-      ctx.fillStyle = gr > 15 ? '#ef4444' : gr > 8 ? '#eab308' : '#22c55e'
-      ctx.fillRect(0, 0, barW, H)
+      try {
+        const gr   = Math.abs(data[`gr_${channelId}`] ?? 0)
+        const barW = Math.min(gr / 30, 1) * W
+        ctx.clearRect(0, 0, W, H)
+        ctx.fillStyle = '#111'
+        ctx.fillRect(0, 0, W, H)
+        ctx.fillStyle = gr > 15 ? '#ef4444' : gr > 8 ? '#eab308' : '#22c55e'
+        ctx.fillRect(0, 0, barW, H)
+      } catch (_) {}
     })
     return unsub
   }, [channelId])
@@ -55,10 +57,11 @@ export default function CompPanel({ channelId, channelName, onClose }) {
   }
 
   return (
+// DESPUÉS:
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.8)' }}
-      onClick={onClose}
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
         className="bg-[#141414] border border-[#2a2a2a] rounded-lg p-5 w-96 shadow-2xl"

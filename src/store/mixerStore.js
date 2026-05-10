@@ -38,10 +38,11 @@ const makeChannel = (index) => ({
   pan:    0,       // -1 (L) ... 0 (C) ... 1 (R)
   muted:  false,
   soloed: false,
-  // HPF
+  // HPF / LPF
   hpf: { active: false, freq: 80 },
+  lpf: { active: false, freq: 20000 },
   // Gate
-  gate: { bypass: true, threshold: -50, attack: 0.002, release: 0.15, range: -80 },
+  gate: { bypass: true, threshold: -50, attack: 0.002, release: 0.15, range: -80, hysteresis: 6, hold: 0.1 },
   // Compressor
   compressor: { bypass: false, threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 6, makeupGain: 0 },
   // EQ semiparamétrico 7 bandas
@@ -49,6 +50,13 @@ const makeChannel = (index) => ({
   // FX Sends (0-100 → porcentaje de señal enviada al FX global)
   reverbSend: 0,
   delaySend:  0,
+  // AUX sends (Paso 9) — one per aux bus (1-8)
+  auxSends: Array.from({ length: 8 }, (_, i) => ({ auxId: i + 1, level: 0, preFader: true, muted: false })),
+  // Subgroup routing (Paso 9) — { [groupId]: boolean }
+  groupSends: {},
+  // Solo/Cue (Paso 9)
+  solo: false,
+  soloMode: 'pfl',  // 'pfl' | 'afl'
 })
 
 // ─── Store ───────────────────────────────────────────────────────────────────
@@ -56,6 +64,17 @@ const useMixerStore = create((set, get) => ({
   channels:   Array.from({ length: 6 }, (_, i) => makeChannel(i)),
   mainVolume: 80,
   subVolume:  80,
+
+  // ─── Routing state (Paso 9) ─────────────────────────────────────────────────
+  auxBuses: Array.from({ length: 8 }, (_, i) => ({ id: i + 1, label: `Aux ${i + 1}`, level: 100, muted: false })),
+  subgroups: [
+    { id: 1, label: 'Drums',  level: 100, muted: false, toMain: true, toSub: false },
+    { id: 2, label: 'Vocals', level: 100, muted: false, toMain: true, toSub: false },
+    { id: 3, label: 'Music',  level: 100, muted: false, toMain: true, toSub: false },
+    { id: 4, label: 'FX Grp', level: 100, muted: false, toMain: true, toSub: false },
+  ],
+  cue:    { level: 100, mode: 'pfl' },
+  matrix: [],  // MatrixConnection[]
 
   // FX Send/Return global (Etapa 6)
   fx: {
@@ -101,6 +120,49 @@ const useMixerStore = create((set, get) => ({
       ),
     })),
 
+  updateChannelLpf: (id, updates) =>
+    set(s => ({
+      channels: s.channels.map(c =>
+        c.id === id ? { ...c, lpf: { ...c.lpf, ...updates } } : c
+      ),
+    })),
+
+  // ─── Acciones routing (Paso 9) ──────────────────────────────────────────
+  updateAuxBus: (id, updates) =>
+    set(s => ({ auxBuses: s.auxBuses.map(b => b.id === id ? { ...b, ...updates } : b) })),
+
+  updateSubgroup: (id, updates) =>
+    set(s => ({ subgroups: s.subgroups.map(g => g.id === id ? { ...g, ...updates } : g) })),
+
+  updateChannelAuxSend: (channelId, auxId, updates) =>
+    set(s => ({
+      channels: s.channels.map(c =>
+        c.id === channelId
+          ? { ...c, auxSends: c.auxSends.map(a => a.auxId === auxId ? { ...a, ...updates } : a) }
+          : c
+      ),
+    })),
+
+  setChannelGroupSend: (channelId, groupId, active) =>
+    set(s => ({
+      channels: s.channels.map(c =>
+        c.id === channelId
+          ? { ...c, groupSends: { ...c.groupSends, [groupId]: active } }
+          : c
+      ),
+    })),
+
+  setChannelSolo: (channelId, soloed, soloMode = 'pfl') =>
+    set(s => ({
+      channels: s.channels.map(c =>
+        c.id === channelId ? { ...c, solo: soloed, soloMode } : c
+      ),
+    })),
+
+  setCue: (updates) => set(s => ({ cue: { ...s.cue, ...updates } })),
+
+  setMatrix: (connections) => set({ matrix: connections }),
+
   // ─── Acciones master ──────────────────────────────────────────────────────
   setMainVolume: (v) => set({ mainVolume: v }),
   setSubVolume:  (v) => set({ subVolume: v }),
@@ -118,6 +180,10 @@ const useMixerStore = create((set, get) => ({
     mainVolume: snapshot.mainVolume ?? get().mainVolume,
     subVolume:  snapshot.subVolume  ?? get().subVolume,
     fx:         snapshot.fx         ?? get().fx,
+    auxBuses:   snapshot.auxBuses   ?? get().auxBuses,
+    subgroups:  snapshot.subgroups  ?? get().subgroups,
+    cue:        snapshot.cue        ?? get().cue,
+    matrix:     snapshot.matrix     ?? get().matrix,
   }),
 
   // Helper

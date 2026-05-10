@@ -1,16 +1,16 @@
 /**
  * deviceService.js — Detección real de interfaces de audio en tiempo real
  *
- * Usa navigator.mediaDevices.enumerateDevices() (disponible en Electron/Chromium).
- * Se actualiza automáticamente con el evento 'devicechange' cuando el usuario
- * conecta o desconecta hardware.
+ * IMPORTANTE: enumerateAudioDevices() YA NO llama getUserMedia() en startup.
+ * getUserMedia() sin AudioContext activo + GPU desactivado mata el renderer
+ * process de Electron (no lanza excepción — crash nativo inmanejable).
  *
- * Detecta y nombra:
- *   Focusrite Scarlett (todas las versiones), Behringer X2222USB / Xenyx,
- *   Yamaha, PreSonus, MOTU, RME, Universal Audio, M-Audio, y genéricos USB.
+ * Flujo seguro:
+ *   1. Startup → enumerateDevices() sin permisos (labels vacíos si no hay permiso)
+ *   2. Usuario click → AudioEngine.initialize() → Tone.start() crea AudioContext
+ *   3. refreshWithPermission() → getUserMedia() ya dentro de un contexto válido
  */
 
-// Catálogo de interfaces conocidas (pattern matching sobre el label del driver)
 const KNOWN_INTERFACES = [
   { pattern: /scarlett 18i20/i,          name: 'Focusrite 18i20',      inputCount: 18 },
   { pattern: /scarlett 18i8/i,           name: 'Focusrite 18i8',       inputCount: 10 },
@@ -34,52 +34,49 @@ const KNOWN_INTERFACES = [
   { pattern: /roland/i,                  name: 'Roland',               inputCount: 2  },
 ]
 
-/**
- * Identifica una interfaz conocida a partir del label del dispositivo.
- * @returns {{ name: string, inputCount: number } | null}
- */
 export function identifyInterface(label) {
   if (!label) return null
   for (const iface of KNOWN_INTERFACES) {
-    if (iface.pattern.test(label)) {
-      return { name: iface.name, inputCount: iface.inputCount }
-    }
+    if (iface.pattern.test(label)) return { name: iface.name, inputCount: iface.inputCount }
   }
-  // Dispositivo USB genérico
   if (/usb/i.test(label)) return { name: label.trim(), inputCount: 2 }
   return null
 }
 
 /**
- * Solicita permiso de audio y enumera todos los dispositivos.
- * En Electron el permiso se otorga automáticamente (ver main.cjs).
- * @returns {Promise<{ inputs: MediaDeviceInfo[], outputs: MediaDeviceInfo[] }>}
+ * Enumeración segura — NO llama getUserMedia().
+ * En Chromium sin permiso previo, los labels aparecen vacíos.
+ * Usar refreshWithPermission() después de que el AudioEngine esté listo.
  */
 export async function enumerateAudioDevices() {
   try {
-    // getUserMedia desbloquea los labels de dispositivo en Chromium
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    // Liberar el stream inmediatamente (solo necesitábamos el permiso)
-    stream.getTracks().forEach(t => t.stop())
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    return {
+      inputs:  devices.filter(d => d.kind === 'audioinput'),
+      outputs: devices.filter(d => d.kind === 'audiooutput'),
+    }
   } catch (err) {
-    console.warn('[ONA] Permiso de audio no concedido:', err.message)
-  }
-
-  const devices = await navigator.mediaDevices.enumerateDevices()
-  return {
-    inputs:  devices.filter(d => d.kind === 'audioinput'),
-    outputs: devices.filter(d => d.kind === 'audiooutput'),
+    console.warn('[ONA] enumerateDevices falló:', err.message)
+    return { inputs: [], outputs: [] }
   }
 }
 
 /**
- * Genera la lista de entradas disponibles para los dropdowns de canal.
- * Ej: ['—', 'In 1', 'In 2', ..., 'ADA 1', 'ADA 8']
- *
- * Si inputCount > 8 asumimos ADAT en canales 9-16.
+ * Re-enumeración CON permiso — llamar solo después de Tone.start().
+ * getUserMedia() dentro de un AudioContext activo es seguro en Electron.
  */
+export async function refreshWithPermission() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    stream.getTracks().forEach(t => t.stop())
+  } catch (err) {
+    console.warn('[ONA] Audio permission denied:', err.message)
+  }
+  return enumerateAudioDevices()
+}
+
 export function generateInputList(inputCount = 8) {
-  const list = ['—']
+  const list   = ['—']
   const analog = Math.min(inputCount, 8)
   for (let i = 1; i <= analog; i++) list.push(`In ${i}`)
   if (inputCount > 8) {
@@ -89,13 +86,10 @@ export function generateInputList(inputCount = 8) {
   return list
 }
 
-/**
- * Registra un listener para cambios de dispositivo en tiempo real.
- * @returns {() => void} función para desregistrar el listener
- */
 export function onDeviceChange(callback) {
   const handler = async () => {
-    const result = await enumerateAudioDevices()
+    // En devicechange siempre re-enumerar con permisos (ya fueron concedidos antes)
+    const result = await refreshWithPermission().catch(() => enumerateAudioDevices())
     callback(result)
   }
   navigator.mediaDevices.addEventListener('devicechange', handler)

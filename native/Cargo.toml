@@ -1,0 +1,28 @@
+[package]
+name    = "ona-dsp-engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["ONA Live Studio"]
+description = "Native realtime DSP engine for ONA Live Studio"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Release: máxima performance, sin símbolos de debug, panic=abort evita
+# el unwinding runtime (crítico para code size en callbacks de audio)
+[profile.release]
+opt-level      = 3
+lto            = true
+codegen-units  = 1
+panic          = "abort"
+strip          = "symbols"
+
+[profile.dev]
+opt-level = 1
+
+[dependencies]
+napi        = { version = "2.16", features = ["napi4"] }
+napi-derive = "2.16"
+
+[build-dependencies]
+napi-build = "2.1"
