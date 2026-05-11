@@ -58,8 +58,10 @@ class NetworkClient {
   private _rttSamples: number[] = []
   private _startTime  = 0
   private _lastSeq    = 0
+  private _ctrlReady  = false
 
-  get connected(): boolean { return this.channel.connected }
+  get connected(): boolean  { return this.channel.connected }
+  get ctrlReady(): boolean  { return this._ctrlReady }
 
   // ── Connection ────────────────────────────────────────────────────────────────
 
@@ -111,8 +113,13 @@ class NetworkClient {
   /**
    * Send a DSP command. Routes by priority automatically.
    * Equivalent to the old syncService.sendCommand().
+   * Commands are queued by CommandChannel when /ctrl is offline and flushed on reconnect.
    */
   sendCommand(type: string, channelId: number | null = null, payload: any = {}): void {
+    if (!this._ctrlReady) {
+      // CommandChannel handles offline queuing — log once to aid debugging
+      console.debug(`[NetworkClient] sendCommand queued (ctrl offline): ${type}`)
+    }
     this.channel.send(type, channelId, payload)
   }
 
@@ -137,6 +144,7 @@ class NetworkClient {
 
   private _wireCtrSocket(): void {
     this._ctrlSocket.on('connect', () => {
+      this._ctrlReady = true
       console.log('[NetworkClient] /ctrl connected')
       // Request delta from last known sequence
       if (this._lastSeq > 0) {
@@ -145,6 +153,7 @@ class NetworkClient {
     })
 
     this._ctrlSocket.on('disconnect', () => {
+      this._ctrlReady = false
       console.warn('[NetworkClient] /ctrl disconnected')
     })
 
@@ -169,6 +178,12 @@ class NetworkClient {
       console.log(`[NetworkClient] full state sync received (${Object.keys(full.state ?? {}).length} paths)`)
       this._lastSeq = full.seq
       for (const cb of this._stateCbs) { try { cb(full) } catch (_) {} }
+    })
+
+    // Server signals that the client's delta window is too old — request a full sync
+    this._ctrlSocket.on('full_sync_required', ({ reason, fromSeq }: { reason: string; fromSeq: number }) => {
+      console.warn(`[NetworkClient] full_sync_required (${reason}, fromSeq=${fromSeq}) — requesting full state`)
+      this._ctrlSocket.emit('request_full_sync')
     })
 
     // RTT measurement

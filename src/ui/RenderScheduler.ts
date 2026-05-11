@@ -86,7 +86,10 @@ class RenderScheduler {
   register(id: string, priority: SchedulePriority, fn: RenderCallback): () => void {
     this._regs.set(id, { id, priority, fn })
     if (!this._running) this.start()
-    return () => this._regs.delete(id)
+    return () => {
+      this._regs.delete(id)
+      if (this._regs.size === 0) this.stop()
+    }
   }
 
   /** UIFailsafe calls this to skip low-priority work */

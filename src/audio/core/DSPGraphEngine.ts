@@ -17,13 +17,19 @@ class DSPGraphEngine {
   private _edges = new Map<string, Set<string>>()
 
   // Handles native AudioNode → Tone wrapper connections (extracts .input)
+  private static _unwrap(node: any): any {
+    // Tone wrapper → usar input si existe
+    const n = node?.input ?? node
+
+    // Si sigue siendo wrapper Tone, extraer nodo nativo real
+    return n?._nativeAudioNode ?? n
+  }
+
   private static _c(src: any, dst: any): void {
-    if (src instanceof AudioNode) {
-      const to = dst instanceof AudioNode ? dst : ((dst as any).input ?? dst)
-      src.connect(to)
-    } else {
-      src.connect(dst)
-    }
+    const from = DSPGraphEngine._unwrap(src)
+    const to   = DSPGraphEngine._unwrap(dst)
+
+    from.connect(to)
   }
 
   register(id: string, node: any): void {
@@ -48,7 +54,15 @@ class DSPGraphEngine {
       this._edges.get(fromId)!.add(toId)
       return true
     } catch (err) {
-      console.warn(`[GRAPH] connect ${fromId}→${toId} falló:`, err)
+      console.warn(`[GRAPH] connect ${fromId}→${toId} falló:`)
+
+      console.log('FROM =', from)
+      console.log('TO =', to)
+
+      console.log('FROM.INPUT =', (from as any)?.input)
+      console.log('TO.INPUT =', (to as any)?.input)
+
+      console.error(err)
       return false
     }
   }

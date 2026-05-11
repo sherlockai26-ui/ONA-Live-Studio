@@ -8,6 +8,7 @@
 import React, { useRef, useEffect, useMemo } from 'react'
 import { computeEqCurve, logFrequencies } from '../utils/audioUtils.js'
 import { EQ_BAND_DEFS } from '../store/mixerStore.js'
+import { performanceModes } from '../audio/scalability/PerformanceModes'
 
 const FREQS      = logFrequencies(20, 20000, 512)
 const DB_MAX     = 12
@@ -30,18 +31,52 @@ function dbToY(db, height) {
 }
 
 export default function EQCurve({ eqBands, width = 470, height = 110 }) {
-  const canvasRef = useRef(null)
+  const canvasRef  = useRef(null)
+  const gradRef    = useRef(null)    // cached gradient — rebuilt only on size change
+  const visibleRef = useRef(true)    // IntersectionObserver visibility flag
 
   const curve = useMemo(
     () => computeEqCurve(eqBands, EQ_BAND_DEFS, FREQS),
     [eqBands]
   )
 
+  // Track visibility — skip redraw when the EQ panel is hidden
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    const observer = new IntersectionObserver(
+      ([entry]) => { visibleRef.current = entry.isIntersecting },
+      { threshold: 0 }
+    )
+    observer.observe(canvas)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    if (!visibleRef.current) return   // skip draw when not visible
+
+    const eco = performanceModes.mode === 'eco'
+    const scale = eco ? 0.5 : 1
+    const cw = Math.max(1, Math.round(width  * scale))
+    const ch = Math.max(1, Math.round(height * scale))
+
+    // Resize canvas for eco mode — half the pixel budget, same CSS size
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width  = cw
+      canvas.height = ch
+      canvas.style.width  = eco ? `${width}px`  : ''
+      canvas.style.height = eco ? `${height}px` : ''
+      gradRef.current = null   // invalidate cached gradient
+    }
+
     const ctx = canvas.getContext('2d')
-    ctx.clearRect(0, 0, width, height)
+    ctx.clearRect(0, 0, cw, ch)
+
+    // Scale coordinate space to logical (prop) dimensions
+    ctx.save()
+    if (scale !== 1) ctx.scale(scale, scale)
 
     // ── Fondo ────────────────────────────────────────────────────────────────
     ctx.fillStyle = '#0f0f0f'
@@ -91,9 +126,12 @@ export default function EQCurve({ eqBands, width = 470, height = 110 }) {
     ctx.setLineDash([])
 
     // ── Curva EQ (fill + stroke) ─────────────────────────────────────────────
-    const gradient = ctx.createLinearGradient(0, 0, 0, height)
-    gradient.addColorStop(0, 'rgba(249,115,22,0.35)')
-    gradient.addColorStop(1, 'rgba(249,115,22,0.0)')
+    // Gradient cached in ref — rebuilt only when canvas is resized
+    if (!gradRef.current) {
+      gradRef.current = ctx.createLinearGradient(0, 0, 0, height)
+      gradRef.current.addColorStop(0, 'rgba(249,115,22,0.35)')
+      gradRef.current.addColorStop(1, 'rgba(249,115,22,0.0)')
+    }
 
     ctx.beginPath()
     ctx.moveTo(0, zeroY)
@@ -106,7 +144,7 @@ export default function EQCurve({ eqBands, width = 470, height = 110 }) {
     ctx.lineTo(width, zeroY)
     ctx.lineTo(0, zeroY)
     ctx.closePath()
-    ctx.fillStyle = gradient
+    ctx.fillStyle = gradRef.current
     ctx.fill()
 
     // Línea de curva
@@ -120,6 +158,8 @@ export default function EQCurve({ eqBands, width = 470, height = 110 }) {
     ctx.strokeStyle = '#f97316'
     ctx.lineWidth = 1.5
     ctx.stroke()
+
+    ctx.restore()
   }, [curve, width, height])
 
   return (

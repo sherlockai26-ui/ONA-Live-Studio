@@ -3,6 +3,7 @@ import Channel           from './components/Channel.jsx'
 import MasterBus         from './components/MasterBus.jsx'
 import FXRack            from './components/FXRack.jsx'
 import Recorder          from './components/Recorder.jsx'
+import RemotePanel       from './components/RemotePanel.jsx'
 import SceneManager      from './components/SceneManager.jsx'
 import VirtualSoundcheck from './components/VirtualSoundcheck.jsx'
 import useMixerStore     from './store/mixerStore.js'
@@ -43,15 +44,22 @@ export default function App() {
         setInitError(null)
         console.log('[BOOT] AudioEngine listo')
 
-        // Wire SceneEngine DSP callback — applies recalled scene to both DSP + store
+        // Wire SceneEngine DSP callback — applies recalled scene to both DSP + store.
+        // try/finally guarantees loadFullState always runs: DSP and UI store stay in sync
+        // even if applyEngineSnapshot throws (e.g. partial node failure).
         sceneEngine.setApplyDSPCallback(async (snapshot) => {
-          audioEngine.applyEngineSnapshot(snapshot)
-          useMixerStore.getState().loadFullState({
-            channels:   snapshot.channels,
-            mainVolume: snapshot.buses.mainVolume,
-            subVolume:  snapshot.buses.subVolume,
-            fx:         snapshot.fx,
-          })
+          try {
+            audioEngine.applyEngineSnapshot(snapshot)
+          } catch (err) {
+            console.error('[SCENE] applyEngineSnapshot falló — store se actualizará de todas formas:', err)
+          } finally {
+            useMixerStore.getState().loadFullState({
+              channels:   snapshot.channels,
+              mainVolume: snapshot.buses.mainVolume,
+              subVolume:  snapshot.buses.subVolume,
+              fx:         snapshot.fx,
+            })
+          }
         })
 
         // Start adaptive UI quality monitoring (Paso 17)
@@ -218,6 +226,7 @@ export default function App() {
           <VirtualSoundcheck />
           <FXRack />
           <Recorder />
+          <RemotePanel />
           <MasterBus />
         </div>
       </div>

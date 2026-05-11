@@ -72,3 +72,68 @@ export function encodeInt24(samples: Float32Array): Uint8Array {
 export function samplesFromDataSize(dataBytes: number, numChannels = 1): number {
   return Math.floor(dataBytes / (numChannels * 3))
 }
+
+// ── In-memory encoder (used by Recorder.jsx for Tone.Recorder → WAV) ─────────
+
+/**
+ * Encode an AudioBuffer to a complete WAV PCM ArrayBuffer (in-memory).
+ * Supports 16-bit and 24-bit output. Samples are interleaved across channels.
+ * For streaming multitrack use buildWavHeader + encodeInt24 + IPC instead.
+ */
+export function encodeWav(audioBuffer: AudioBuffer, bitDepth: 16 | 24 = 24): ArrayBuffer {
+  const numChannels    = audioBuffer.numberOfChannels
+  const sampleRate     = audioBuffer.sampleRate
+  const length         = audioBuffer.length
+  const bytesPerSample = bitDepth / 8
+  const dataSize       = length * numChannels * bytesPerSample
+  const buf            = new ArrayBuffer(WAV_HEADER_SIZE + dataSize)
+  const view           = new DataView(buf)
+
+  _writeStr(view, 0,  'RIFF')
+  view.setUint32(4,   36 + dataSize,                             true)
+  _writeStr(view, 8,  'WAVE')
+  _writeStr(view, 12, 'fmt ')
+  view.setUint32(16,  16,                                        true)
+  view.setUint16(20,  1,                                         true)  // PCM
+  view.setUint16(22,  numChannels,                               true)
+  view.setUint32(24,  sampleRate,                                true)
+  view.setUint32(28,  sampleRate * numChannels * bytesPerSample, true)
+  view.setUint16(32,  numChannels * bytesPerSample,              true)
+  view.setUint16(34,  bitDepth,                                  true)
+  _writeStr(view, 36, 'data')
+  view.setUint32(40,  dataSize,                                  true)
+
+  let offset = WAV_HEADER_SIZE
+  for (let i = 0; i < length; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      const s = Math.max(-1, Math.min(1, audioBuffer.getChannelData(c)[i]))
+      if (bitDepth === 16) {
+        view.setInt16(offset, Math.round(s * 32767), true)
+        offset += 2
+      } else {
+        const v = Math.round(s * 8388607)
+        view.setUint8(offset,     v        & 0xFF)
+        view.setUint8(offset + 1, (v >> 8) & 0xFF)
+        view.setUint8(offset + 2, (v >> 16) & 0xFF)
+        offset += 3
+      }
+    }
+  }
+
+  return buf
+}
+
+/**
+ * Decode a Blob (WebM/Opus from Tone.Recorder) and encode as WAV PCM.
+ * Creates a temporary AudioContext for decoding; closes it when done.
+ */
+export async function blobToWav(blob: Blob, bitDepth: 16 | 24 = 24): Promise<ArrayBuffer> {
+  const arrayBuffer = await blob.arrayBuffer()
+  const audioCtx    = new AudioContext()
+  try {
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+    return encodeWav(audioBuffer, bitDepth)
+  } finally {
+    audioCtx.close()
+  }
+}

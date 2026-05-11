@@ -192,25 +192,36 @@ class ShowFileEngine {
     // Mark running — if crash occurs, flag will be found on next startup
     localStorage.setItem(LS_CRASH_FLAG, '1')
 
-    this._autosaveId = setInterval(() => {
-      try {
-        const show = this.buildShowFile()
-        const json = JSON.stringify(show)
-        const slot = `${LS_AUTOSAVE}_${Date.now()}`
-        localStorage.setItem(slot, json)
+    this._autosaveId = setInterval(() => this._doAutosave(), intervalMs)
+  }
 
-        // Prune old autosaves
-        const keys = Object.keys(localStorage)
-          .filter(k => k.startsWith(LS_AUTOSAVE))
-          .sort()
-        while (keys.length > MAX_AUTOSAVES) {
-          localStorage.removeItem(keys.shift()!)
-        }
-        console.log('[ShowFile] Autosave written')
-      } catch (e) {
-        console.error('[ShowFile] Autosave failed:', e)
+  private _doAutosave(): void {
+    try {
+      const show = this.buildShowFile()
+      const json = JSON.stringify(show)
+
+      // Primary: persist to disk via Electron IPC (saves to scenes directory as __autosave__)
+      const ipc = typeof window !== 'undefined' && (window as any).electronAPI
+      if (ipc?.saveScene) {
+        ;(ipc.saveScene('__autosave__', json) as Promise<void>).catch(() => {
+          // IPC failed — localStorage backup below is sufficient
+        })
       }
-    }, intervalMs)
+
+      // Secondary (backup): write to localStorage ring buffer (up to MAX_AUTOSAVES slots)
+      const slot = `${LS_AUTOSAVE}_${Date.now()}`
+      localStorage.setItem(slot, json)
+      const keys = Object.keys(localStorage)
+        .filter(k => k.startsWith(LS_AUTOSAVE + '_'))
+        .sort()
+      while (keys.length > MAX_AUTOSAVES) {
+        localStorage.removeItem(keys.shift()!)
+      }
+
+      console.log('[ShowFile] Autosave written')
+    } catch (e) {
+      console.error('[ShowFile] Autosave failed:', e)
+    }
   }
 
   stopAutosave(): void {

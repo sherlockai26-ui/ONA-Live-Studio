@@ -1,20 +1,20 @@
 /**
- * PersistenceEngine.ts — Autosave, crash recovery, and project persistence.
+ * PersistenceEngine.ts — Crash recovery and project persistence.
  *
  * Storage keys:
- *   'ona_autosave'  — rolling autosave entry for crash recovery
+ *   'ona_autosave'  — rolling snapshot for crash recovery (written on events + beforeunload)
  *   'ona_projects'  — named project saves (max 10, oldest evicted)
  *
- * Autosave: setInterval-based (default 30s). Writes StateEngine.getSnapshot()
- * to localStorage on each tick.
+ * Periodic autosave has been removed from this engine to eliminate the dual-autosave
+ * conflict with ShowFileEngine (which owns the 30s periodic cycle). PersistenceEngine
+ * now writes only on:
+ *   - explicit flushAutosave() calls (scene recall, channel add, app close)
+ *   - window 'beforeunload' event registered by startAutosave()
  *
  * Crash recovery:
  *   - On startup: call hasLastSession() / getLastSession()
  *   - If stale session exists, offer user to restore
  *   - clearLastSession() after successful restore or discard
- *
- * Future: extend saveProject() to call window.electronAPI.saveSession()
- * for full file-system persistence in Electron (IPC to main.cjs fs.writeFile).
  *
  * Exposed via window.__ONA_STATE.persist
  */
@@ -27,25 +27,32 @@ const LS_PROJECTS  = 'ona_projects'
 const MAX_PROJECTS = 10
 
 class PersistenceEngine {
-  private _intervalId: ReturnType<typeof setInterval> | null = null
-  private _lastSaveAt = 0
+  private _lastSaveAt  = 0
+  private _beforeUnload: (() => void) | null = null
 
-  // ── Autosave ──────────────────────────────────────────────────────────────
+  // ── Event-driven autosave (no interval — ShowFileEngine owns the 30s cycle) ──
 
-  startAutosave(intervalMs = 30_000): void {
-    if (this._intervalId !== null) return
-    this._intervalId = setInterval(() => this._doAutosave(), intervalMs)
-    console.log(`[PERSIST] Autosave activo — cada ${intervalMs / 1000}s`)
+  /**
+   * Register a beforeunload handler so the DSP snapshot is flushed on app close.
+   * Call once during engine initialization. Safe to call multiple times.
+   */
+  startAutosave(_intervalMs?: number): void {
+    if (this._beforeUnload) return
+    this._beforeUnload = () => this._doAutosave()
+    window.addEventListener('beforeunload', this._beforeUnload)
+    // Write immediately so crash recovery has a baseline from the start of the session.
+    this._doAutosave()
+    console.log('[PERSIST] Crash-recovery snapshot activo (beforeunload + flush explícito)')
   }
 
   stopAutosave(): void {
-    if (this._intervalId !== null) {
-      clearInterval(this._intervalId)
-      this._intervalId = null
+    if (this._beforeUnload) {
+      window.removeEventListener('beforeunload', this._beforeUnload)
+      this._beforeUnload = null
     }
   }
 
-  /** flushAutosave — force immediate write (call before app close). */
+  /** flushAutosave — explicit write on important events (scene recall, app close, etc.). */
   flushAutosave(): void { this._doAutosave() }
 
   private _doAutosave(): void {

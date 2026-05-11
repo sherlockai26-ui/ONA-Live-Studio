@@ -19,6 +19,7 @@ import type { ChannelStrip } from './ChannelStrip'
 import type { BusEngine }    from './BusEngine'
 import { workletManager }    from './WorkletManager'
 import { cpuSafetyMode }     from './CPUSafetyMode'
+import { resourceManager }   from '../scalability/ResourceManager'
 
 const SAB_LEN = 20
 // Default 40ms (25fps). cpuSafetyMode.meteringIntervalMs overrides in-flight.
@@ -98,18 +99,25 @@ export class MeteringEngine {
         let idx = 0
         for (const [id, strip] of this._strips!) {
           try {
-            const m = strip.tickMeter()
-            const gateLevel = (workletManager.isReady() && strip.isUsingWorkletGate())
-              ? workletManager.getGateLevel(id)
-              : m.gateLevel
+            const meterId = `ch${id}`
+            if (resourceManager.isMeterSuspended(meterId)) {
+              // Skip analyser read — use cached value to avoid unnecessary getFloatTimeDomainData
+              this._data[id] = resourceManager.getCachedMeterValue(meterId)
+            } else {
+              const m = strip.tickMeter()
+              const gateLevel = (workletManager.isReady() && strip.isUsingWorkletGate())
+                ? workletManager.getGateLevel(id)
+                : m.gateLevel
 
-            // Mutación directa — sin allocations
-            this._data[id]              = m.outputDb
-            this._data[this._grKeys[idx]]   = m.gainReduction
-            this._data[this._gateKeys[idx]] = gateLevel
-            this._buf[idx]      = m.outputDb
-            this._buf[8  + idx] = m.gainReduction
-            this._buf[14 + idx] = gateLevel
+              // Mutación directa — sin allocations
+              this._data[id]              = m.outputDb
+              this._data[this._grKeys[idx]]   = m.gainReduction
+              this._data[this._gateKeys[idx]] = gateLevel
+              this._buf[idx]      = m.outputDb
+              this._buf[8  + idx] = m.gainReduction
+              this._buf[14 + idx] = gateLevel
+              resourceManager.updateMeterValue(meterId, m.outputDb)
+            }
           } catch (_) {
             this._data[id] = -Infinity
           }

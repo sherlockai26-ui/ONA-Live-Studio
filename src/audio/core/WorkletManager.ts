@@ -32,10 +32,11 @@ export interface WorkletChannelNodes {
 type WorkletState = 'idle' | 'loading' | 'ready' | 'error'
 
 class WorkletManager {
-  private _ctx:        AudioContext | null = null
-  private _state:      WorkletState = 'idle'
-  private _sabView:    Float32Array | null = null
-  private _nodes       = new Map<number, WorkletChannelNodes>()
+  private _ctx:          AudioContext | null = null
+  private _state:        WorkletState = 'idle'
+  private _sabView:      Float32Array | null = null
+  private _sabAvailable  = false
+  private _nodes         = new Map<number, WorkletChannelNodes>()
   private _readyPromise: Promise<void> | null = null
 
   // ── Inicialización ────────────────────────────────────────────────────────────
@@ -61,19 +62,26 @@ class WorkletManager {
         this._ctx.audioWorklet.addModule('./worklets/ona-router-processor.js'),
       ])
 
-      // Allocar SAB compartido para todos los worklets del proyecto
+      // Allocar SAB compartido para todos los worklets del proyecto.
+      // Si SAB no está disponible (COOP/COEP no configurado o navegador restringido)
+      // los worklets funcionan para DSP pero no pueden reportar métricas de vuelta
+      // al hilo principal. MeteringEngine usa AnalyserNode como fallback automático.
       try {
         const sab = new SharedArrayBuffer(WORKLET_SAB_FLOATS * Float32Array.BYTES_PER_ELEMENT)
-        this._sabView = new Float32Array(sab)
+        this._sabView     = new Float32Array(sab)
+        this._sabAvailable = true
+        this._sabView.fill(-200)
       } catch {
-        // SAB no disponible — fallback a ArrayBuffer normal
-        this._sabView = new Float32Array(WORKLET_SAB_FLOATS)
-        console.warn('[WORKLET] SharedArrayBuffer no disponible — usando ArrayBuffer fallback')
+        this._sabView     = null
+        this._sabAvailable = false
+        console.warn(
+          '[WORKLET] SharedArrayBuffer no disponible — worklets activos para DSP, ' +
+          'pero sin métricas SAB; MeteringEngine usa AnalyserNode como fallback'
+        )
       }
-      this._sabView.fill(-200)  // inicializar a silencio
 
       this._state = 'ready'
-      console.log('[WORKLET] WorkletManager listo — 3 módulos registrados')
+      console.log(`[WORKLET] WorkletManager listo — 3 módulos registrados (SAB: ${this._sabAvailable})`)
     } catch (err) {
       this._state = 'error'
       console.error('[WORKLET] Error al cargar módulos:', err)
@@ -81,9 +89,10 @@ class WorkletManager {
     }
   }
 
-  isReady():   boolean           { return this._state === 'ready' }
-  getState():  WorkletState      { return this._state }
-  getSAB():    Float32Array | null { return this._sabView }
+  isReady():        boolean            { return this._state === 'ready' }
+  getState():       WorkletState       { return this._state }
+  getSAB():         Float32Array | null { return this._sabView }
+  get sabAvailable(): boolean           { return this._sabAvailable }
 
   // ── Creación de nodos ─────────────────────────────────────────────────────────
 
@@ -100,8 +109,8 @@ class WorkletManager {
         outputChannelCount: [2],
       })
 
-      // Enviar SAB al worklet para que reporte gate level
-      if (this._sabView?.buffer) {
+      // Enviar SAB al worklet solo si está disponible (no enviar ArrayBuffer normal)
+      if (this._sabAvailable && this._sabView) {
         node.port.postMessage({ sab: this._sabView.buffer, channelIndex: channelId - 1 })
       }
 
@@ -130,7 +139,7 @@ class WorkletManager {
         processorOptions: { isTap: false },
       })
 
-      if (this._sabView?.buffer) {
+      if (this._sabAvailable && this._sabView) {
         node.port.postMessage({
           sab:          this._sabView.buffer,
           channelIndex: channelId - 1,

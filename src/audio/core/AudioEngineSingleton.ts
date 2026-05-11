@@ -1056,11 +1056,13 @@ class AudioEngineSingleton {
     // Channel sleep system — signal-based sleep/wake
     channelSleepSystem.setPeakReader((id) => this._meteringEngine.getChannelMeter(id))
     channelSleepSystem.onSleep((id) => {
-      dspLoadBalancer.schedule(`sleep_${id}`, 3, () => {})  // demote priority
-      resourceManager.touchMeter(`ch${id}`)  // let idle timer run
+      // Demote to LOW priority — let the ResourceManager idle timer expire naturally
+      // (do NOT touch the meter here, otherwise the idle timer resets and never suspends)
+      dspLoadBalancer.schedule(`sleep_${id}`, 3, () => {})
     })
     channelSleepSystem.onWake((id) => {
-      resourceManager.touchMeter(`ch${id}`)  // resume reads
+      // Resume meter reads immediately on wake
+      resourceManager.touchMeter(`ch${id}`)
     })
     for (const id of this._strips.keys()) {
       channelSleepSystem.registerChannel(id)

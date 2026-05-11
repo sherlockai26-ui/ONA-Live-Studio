@@ -18,7 +18,7 @@ import * as Tone from 'tone'
 // no quedan registrados en standardized-audio-context, causando
 // "A value with the given key could not be found" al conectarlos.
 function getRawCtx(): AudioContext {
-  return Tone.getContext() as unknown as AudioContext
+  return Tone.getContext().rawContext as AudioContext
 }
 
 function volToDb(v: number): number  { return v <= 0 ? -Infinity : 20 * Math.log10(v / 100) }
@@ -39,10 +39,14 @@ export class BusEngine {
   private _destNode: AudioNode | null = null  // stored for protection chain injection
 
   initialize(): void {
-    const ctx         = getRawCtx()
-    // Destino Tone — GainNode del Tone.Destination
-    const toneDestIn  = (Tone.getDestination() as any).input ?? ctx.destination
-    this._destNode    = toneDestIn
+    const ctx = getRawCtx()
+
+    // FIX 4:
+    // Conectar directamente al AudioDestinationNode real.
+    // Evita incompatibilidad Tone.js ↔ standardized-audio-context.
+    const toneDestIn = ctx.destination
+
+    this._destNode = toneDestIn
 
     for (const id of ['main', 'sub']) {
       const gain     = ctx.createGain()

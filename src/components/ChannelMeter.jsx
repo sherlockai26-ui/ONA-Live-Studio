@@ -1,17 +1,28 @@
 import React, { useRef, useEffect } from 'react'
 import { audioEngine } from '../audio/audioEngine.js'
+import { resourceManager } from '../audio/scalability/ResourceManager'
+import { performanceModes } from '../audio/scalability/PerformanceModes'
 
 const DB_MIN          = -60
 const DB_MAX          = 0
 const PEAK_HOLD_FRAMES = 60   // ~2 s a 30 fps (throttled)
 
 export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
-  const canvasRef = useRef(null)
-  const stRef     = useRef({ level: -Infinity, peak: -Infinity, peakAge: 0 })
+  const canvasRef  = useRef(null)
+  const stRef      = useRef({ level: -Infinity, peak: -Infinity, peakAge: 0 })
+  const visibleRef = useRef(true)
+  const frameRef   = useRef(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+
+    // IntersectionObserver — skip draw when off-screen
+    const observer = new IntersectionObserver(
+      ([entry]) => { visibleRef.current = entry.isIntersecting },
+      { threshold: 0 },
+    )
+    observer.observe(canvas)
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -19,9 +30,8 @@ export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
     const W = canvas.width
     const H = canvas.height
 
-    // ── Gradient pre-computado UNA SOLA VEZ ──────────────────────────────────
-    // ctx.createLinearGradient dentro de draw() creaba 360 objetos/segundo
-    // bajo software rendering → presión GC → renderer killed por Chromium.
+    // Gradient pre-computado UNA SOLA VEZ — ctx.createLinearGradient dentro de draw()
+    // creaba 360 objetos/segundo bajo software rendering → presión GC.
     const grad = ctx.createLinearGradient(0, H, 0, 0)
     grad.addColorStop(0,    '#22c55e')
     grad.addColorStop(0.65, '#22c55e')
@@ -34,7 +44,15 @@ export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
       return H - ((clamped - DB_MIN) / (DB_MAX - DB_MIN)) * H
     }
 
+    const meterId = `ch${channelId}`
+
     const draw = () => {
+      // Skip draws when meter is suspended by ResourceManager
+      if (resourceManager.isMeterSuspended(meterId)) {
+        ctx.clearRect(0, 0, W, H)
+        return
+      }
+
       const { level, peak } = stRef.current
 
       ctx.clearRect(0, 0, W, H)
@@ -45,7 +63,7 @@ export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
         const y    = toY(level)
         const barH = H - y
         if (barH > 0) {
-          ctx.fillStyle = grad          // reutiliza el gradiente pre-computado
+          ctx.fillStyle = grad
           ctx.fillRect(0, y, W, barH)
         }
       }
@@ -57,7 +75,16 @@ export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
       }
     }
 
+    if (!audioEngine || typeof audioEngine.onMeterUpdate !== 'function') return
+
     const unsub = audioEngine.onMeterUpdate((data) => {
+      // Skip update when off-screen
+      if (!visibleRef.current) return
+
+      // Eco mode: skip odd frames (halves draw rate)
+      frameRef.current++
+      if (performanceModes.mode === 'eco' && (frameRef.current & 1) !== 0) return
+
       const db = data[channelId] ?? -Infinity
       const st = stRef.current
       st.level = db
@@ -74,7 +101,11 @@ export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
     })
 
     draw()
-    return unsub
+
+    return () => {
+      if (typeof unsub === 'function') unsub()
+      observer.disconnect()
+    }
   }, [channelId])
 
   return (

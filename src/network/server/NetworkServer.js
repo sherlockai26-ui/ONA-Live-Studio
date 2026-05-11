@@ -116,9 +116,22 @@ ctrlNs.on('connection', (socket) => {
   })
 
   socket.on('request_delta', ({ fromSeq }) => {
-    const delta = cmdRouter.getDelta(fromSeq ?? 0)
+    const seq = fromSeq ?? 0
+    // If the client's last known seq precedes our oldest log entry the delta is incomplete —
+    // tell the client to request a full state sync instead of replaying a partial window.
+    if (seq > 0 && seq < cmdRouter.oldestSeq()) {
+      socket.emit('full_sync_required', { reason: 'delta_window_expired', fromSeq: seq, oldestSeq: cmdRouter.oldestSeq() })
+      console.warn(`[NET] full_sync_required → ${socket.id.slice(0, 8)} (fromSeq ${seq} < oldest ${cmdRouter.oldestSeq()})`)
+      return
+    }
+    const delta = cmdRouter.getDelta(seq)
     socket.emit('command_log', delta)
-    console.log(`[NET] delta ${fromSeq}→${cmdRouter.currentSeq()} (${delta.length} commands) → ${socket.id.slice(0, 8)}`)
+    console.log(`[NET] delta ${seq}→${cmdRouter.currentSeq()} (${delta.length} commands) → ${socket.id.slice(0, 8)}`)
+  })
+
+  socket.on('request_full_sync', () => {
+    console.log(`[NET] request_full_sync from ${socket.id.slice(0, 8)}`)
+    sendFullSync(socket, 'ctrl')
   })
 
   socket.on('ping_reply', ({ ts }) => {

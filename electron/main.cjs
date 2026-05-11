@@ -38,14 +38,36 @@ process.on('unhandledRejection', (reason) => {
   writeCrashLog('MAIN_REJECTION', msg)
 })
 
-// ── GPU: deshabilitar solo el rendering, NO el pipeline de audio ──────────────
-// app.disableHardwareAcceleration() deshabilita también el proceso de audio
-// del GPU en Windows (WASAPI routing), lo que rompe WebAudio/Tone.js.
-// Usamos switches específicos de Chromium para deshabilitar solo lo visual:
-app.commandLine.appendSwitch('disable-gpu')
-app.commandLine.appendSwitch('disable-gpu-compositing')
-app.commandLine.appendSwitch('disable-gpu-rasterization')
-app.commandLine.appendSwitch('disable-software-rasterizer')
+// ── GPU: aceleración por defecto con fallback automático tras crash ──────────
+// Si el proceso GPU crasheó en un arranque anterior (detectado por flag en TEMP),
+// deshabilitamos los switches de rendering visual para esa sesión y borramos el flag
+// (el siguiente arranque vuelve a intentar GPU). Así los canvas de medidores y
+// curvas EQ usan GPU siempre que esté disponible, descargando la CPU.
+const _gpuFlagPath = path.join(
+  process.env.TEMP || process.env.TMPDIR || '/tmp',
+  'ona_live_gpu_crash_flag'
+)
+
+if (fs.existsSync(_gpuFlagPath)) {
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
+  app.commandLine.appendSwitch('disable-gpu-rasterization')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+  try { fs.unlinkSync(_gpuFlagPath) } catch (_) {}
+  console.log('[ONA MAIN] Modo CPU — crash GPU detectado en arranque anterior; se reintentará GPU en el próximo arranque')
+}
+
+// Escribir flag al detectar crash del proceso GPU — activa modo CPU en la siguiente sesión
+app.on('child-process-gone', (_event, details) => {
+  if (details.type !== 'GPU') return
+  try { fs.writeFileSync(_gpuFlagPath, String(Date.now()), 'utf-8') } catch (_) {}
+  console.warn(`[ONA MAIN] GPU process gone (reason=${details.reason}) — próximo arranque usará modo CPU`)
+})
+// Compatibilidad con versiones antiguas de Electron (< 14)
+app.on('gpu-process-crashed', (_event, killed) => {
+  try { fs.writeFileSync(_gpuFlagPath, String(Date.now()), 'utf-8') } catch (_) {}
+  console.warn(`[ONA MAIN] GPU crashed (killed=${killed}) — próximo arranque usará modo CPU`)
+})
 
 // SharedArrayBuffer: habilitar en contexto desktop sin requerir COOP/COEP
 // Necesario para el SAB de metering en AudioEngineSingleton.ts
@@ -191,7 +213,9 @@ ipcMain.handle('get-recordings-dir', async () => {
 // El header WAV se escribe con sizes=0 al inicio y se actualiza al final porque
 // no conocemos el tamaño total hasta que la grabación termina.
 
-/** Map: sessionId → { dir, fds: Map<channelId, {fd, path, pos}>, sampleRate, channels, startTime } */
+const MAX_SESSION_BYTES = 10 * 1024 * 1024 * 1024  // 10 GB runaway guard per session
+
+/** Map: sessionId → { dir, fds: Map<channelId, {fd, path, pos}>, sampleRate, channels, startTime, totalBytes } */
 const _activeSessions = new Map()
 
 /** Build a 44-byte WAV header Buffer with the given sizes (may be 0 for placeholder). */
@@ -236,7 +260,17 @@ ipcMain.handle('recording:write-chunk', async (_, sessionId, channelId, arrayBuf
   if (!sess) return false
   const entry = sess.fds.get(channelId)
   if (!entry) return false
+
   const buf = Buffer.from(arrayBuffer)
+
+  // Runaway guard: discard if session has already written more than MAX_SESSION_BYTES
+  sess.totalBytes = (sess.totalBytes ?? 0) + buf.length
+  if (sess.totalBytes > MAX_SESSION_BYTES) {
+    sess.totalBytes -= buf.length   // don't count the discarded chunk
+    console.warn(`[REC] write-chunk DISCARDED — session "${sessionId}" exceeded ${MAX_SESSION_BYTES / 1e9}GB limit`)
+    return false
+  }
+
   fs.writeSync(entry.fd, buf, 0, buf.length, entry.pos)
   entry.pos += buf.length
   return true

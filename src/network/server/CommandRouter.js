@@ -15,8 +15,10 @@
  *   the later ts wins. Ties broken by socketId string comparison.
  */
 
-const MAX_LOG           = 2000
-const CONFLICT_WINDOW_MS = 50
+const MAX_LOG             = 5000
+const CONFLICT_WINDOW_MS  = 50
+const RATE_BUCKET_CAPACITY = 50   // max commands per window per client
+const RATE_BUCKET_WINDOW_MS = 100 // window size in ms
 
 const PRIORITY = {
   // CRITICAL — always routed first, never dropped
@@ -70,6 +72,37 @@ export class CommandRouter {
   /** Last seen command per (type+channelId) for conflict detection */
   _lastSeen = new Map()
 
+  /** Token buckets for per-client rate limiting: socketId → { tokens, lastRefill } */
+  _rateBuckets = new Map()
+
+  /**
+   * Token-bucket rate check. Allows RATE_BUCKET_CAPACITY commands per RATE_BUCKET_WINDOW_MS.
+   * @param {string} socketId
+   * @returns {boolean} true if allowed, false if rate-limited
+   */
+  _checkRateLimit(socketId) {
+    const now = Date.now()
+    let bucket = this._rateBuckets.get(socketId)
+    if (!bucket) {
+      this._rateBuckets.set(socketId, { tokens: RATE_BUCKET_CAPACITY - 1, lastRefill: now })
+      return true
+    }
+    if (now - bucket.lastRefill >= RATE_BUCKET_WINDOW_MS) {
+      bucket.tokens    = RATE_BUCKET_CAPACITY
+      bucket.lastRefill = now
+    }
+    if (bucket.tokens > 0) {
+      bucket.tokens--
+      return true
+    }
+    return false
+  }
+
+  /** Call on socket disconnect to free bucket memory */
+  removeClient(socketId) {
+    this._rateBuckets.delete(socketId)
+  }
+
   /** @type {import('socket.io').Namespace} ctrl namespace */
   _ctrl   = null
   /** @type {import('socket.io').Namespace} sync namespace */
@@ -94,6 +127,11 @@ export class CommandRouter {
   route(cmd, fromSocketId, excludeSocketId) {
     if (!cmd || !VALID_TYPES.has(cmd.type)) {
       return { ok: false, reason: `unknown type: ${cmd?.type}` }
+    }
+
+    if (!this._checkRateLimit(fromSocketId)) {
+      console.warn(`[CommandRouter] Rate limit exceeded: ${fromSocketId} (${cmd.type})`)
+      return { ok: false, reason: 'rate_limit_exceeded' }
     }
 
     const prio    = PRIORITY[cmd.type]
@@ -124,6 +162,11 @@ export class CommandRouter {
     }
 
     return { ok: true, cmd: routed }
+  }
+
+  /** Returns the sequence number of the oldest command still in the log, or 0 if empty. */
+  oldestSeq() {
+    return this._log.length > 0 ? this._log[0].seq : 0
   }
 
   /**

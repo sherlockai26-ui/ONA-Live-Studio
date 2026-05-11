@@ -10,7 +10,9 @@
  */
 
 import React, { useRef, useEffect, useCallback } from 'react'
-import { uiLayerManager } from './UILayerManager'
+import { uiLayerManager }  from './UILayerManager'
+import { resourceManager } from '../audio/scalability/ResourceManager'
+import { performanceModes } from '../audio/scalability/PerformanceModes'
 
 export interface ConsoleMeterProps {
   channelId:   number | string
@@ -36,11 +38,14 @@ export function ConsoleMeter({
   orientation = 'vertical',
   className = '',
 }: ConsoleMeterProps): React.ReactElement {
-  const canvasRef   = useRef<HTMLCanvasElement>(null)
-  const gradRef     = useRef<CanvasGradient | null>(null)
-  const peakRef     = useRef<{ val: number; ts: number }>({ val: 0, ts: 0 })
-  const clipRef     = useRef<number>(0)           // timestamp of last clip
-  const smoothRef   = useRef<number>(0)           // smoothed level
+  const canvasRef    = useRef<HTMLCanvasElement>(null)
+  const gradRef      = useRef<CanvasGradient | null>(null)
+  const peakRef      = useRef<{ val: number; ts: number }>({ val: 0, ts: 0 })
+  const clipRef      = useRef<number>(0)           // timestamp of last clip
+  const smoothRef    = useRef<number>(0)           // smoothed level
+  const visibleRef   = useRef<boolean>(true)       // IntersectionObserver flag
+  const frameRef     = useRef<number>(0)           // frame counter for eco skip
+  const ecoScaleRef  = useRef<number>(1)           // last applied canvas scale
 
   const buildGradient = useCallback((ctx: CanvasRenderingContext2D): CanvasGradient => {
     const grad = orientation === 'vertical'
@@ -61,8 +66,42 @@ export function ConsoleMeter({
 
     gradRef.current = buildGradient(ctx)
 
+    // Stop drawing when canvas scrolls out of view
+    const observer = new IntersectionObserver(
+      ([entry]) => { visibleRef.current = entry.isIntersecting },
+      { threshold: 0 }
+    )
+    observer.observe(canvas)
+
+    const meterId = typeof channelId === 'number' ? `ch${channelId}` : String(channelId)
+
     const id = `meter_${channelId}`
     const unsub = uiLayerManager.register('metering', (now) => {
+      // Skip draw when scrolled off screen
+      if (!visibleRef.current) return
+
+      // Stop completely when ResourceManager suspends this channel's meter
+      if (resourceManager.isMeterSuspended(meterId)) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        return
+      }
+
+      // Eco mode: half the draw rate and canvas resolution
+      const eco = performanceModes.mode === 'eco'
+      frameRef.current++
+      if (eco && (frameRef.current & 1) !== 0) return  // skip odd frames → ~15fps
+
+      // Resize canvas to half in eco mode; restore to full on exit
+      const targetScale = eco ? 0.5 : 1
+      if (ecoScaleRef.current !== targetScale) {
+        ecoScaleRef.current = targetScale
+        canvas.width  = Math.max(1, Math.round(width  * targetScale))
+        canvas.height = Math.max(1, Math.round(height * targetScale))
+        canvas.style.width  = eco ? `${width}px`  : ''
+        canvas.style.height = eco ? `${height}px` : ''
+        gradRef.current = buildGradient(ctx)  // gradient resets with canvas
+      }
+
       const raw  = Math.max(0, Math.min(1, getLevel()))
       // Exponential smoothing: attack fast, release slower
       smoothRef.current = raw > smoothRef.current
@@ -82,7 +121,13 @@ export function ConsoleMeter({
       // Clip detection
       if (level >= 0.999) clipRef.current = now
 
-      ctx.clearRect(0, 0, width, height)
+      const cw = canvas.width
+      const ch = canvas.height
+      ctx.clearRect(0, 0, cw, ch)
+
+      // Scale coordinate space to match logical (prop) dimensions
+      ctx.save()
+      if (ecoScaleRef.current !== 1) ctx.scale(ecoScaleRef.current, ecoScaleRef.current)
 
       // Fill meter
       ctx.fillStyle = gradRef.current ?? '#22c55e'
@@ -114,9 +159,12 @@ export function ConsoleMeter({
           ctx.fillRect(width - 4, 0, 4, height)
         }
       }
+
+      ctx.restore()
     }, id)
 
     return () => {
+      observer.disconnect()
       unsub()
       gradRef.current = null
     }

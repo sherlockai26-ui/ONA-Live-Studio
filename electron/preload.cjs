@@ -43,92 +43,75 @@ contextBridge.exposeInMainWorld('ona', {
 //
 // loadFile devuelve el WAV como ArrayBuffer para decodificarlo en el renderer
 // (MultitrackPlayer.loadSessionTrack → AudioContext.decodeAudioData).
+//
+// ChunkCoalescer: acumula chunks del mismo canal hasta COALESCE_MS antes de enviar
+// al main process. Reduce llamadas IPC en ráfagas y protege el pipe de escritura.
+// finalizeSession() drena automáticamente los chunks pendientes antes de cerrar.
+
+const COALESCE_MS = 50
+// Map: `${sessionId}:${channelId}` → { bufs: ArrayBuffer[], timerId }
+const _chunkPending = new Map()
+
+function _chunkKey(sessionId, channelId) {
+  return `${sessionId}:${channelId}`
+}
+
+function _flushChunkKey(key, sessionId, channelId) {
+  const entry = _chunkPending.get(key)
+  if (!entry || entry.bufs.length === 0) { _chunkPending.delete(key); return Promise.resolve() }
+  clearTimeout(entry.timerId)
+  _chunkPending.delete(key)
+
+  const totalBytes = entry.bufs.reduce((s, b) => s + b.byteLength, 0)
+  const merged = new Uint8Array(totalBytes)
+  let off = 0
+  for (const b of entry.bufs) { merged.set(new Uint8Array(b), off); off += b.byteLength }
+  return ipcRenderer.invoke('recording:write-chunk', sessionId, channelId, merged.buffer)
+}
+
+function _queueChunk(sessionId, channelId, arrayBuffer) {
+  const key = _chunkKey(sessionId, channelId)
+  if (!_chunkPending.has(key)) {
+    const entry = { bufs: [arrayBuffer], timerId: null }
+    entry.timerId = setTimeout(() => _flushChunkKey(key, sessionId, channelId), COALESCE_MS)
+    _chunkPending.set(key, entry)
+  } else {
+    _chunkPending.get(key).bufs.push(arrayBuffer)
+  }
+}
+
+function _flushSession(sessionId) {
+  const promises = []
+  for (const key of [..._chunkPending.keys()]) {
+    if (!key.startsWith(`${sessionId}:`)) continue
+    const channelId = Number(key.split(':')[1])
+    promises.push(_flushChunkKey(key, sessionId, channelId))
+  }
+  return Promise.all(promises)
+}
 
 contextBridge.exposeInMainWorld('onaRecording', {
   createSession:   (channels, sampleRate) =>
     ipcRenderer.invoke('recording:create-session', channels, sampleRate),
-  writeChunk:      (sessionId, channelId, arrayBuffer) =>
-    ipcRenderer.invoke('recording:write-chunk', sessionId, channelId, arrayBuffer),
-  finalizeSession: (sessionId, latencyInfo) =>
-    ipcRenderer.invoke('recording:finalize-session', sessionId, latencyInfo),
+  writeChunk: (sessionId, channelId, arrayBuffer) => {
+    _queueChunk(sessionId, channelId, arrayBuffer)
+    return Promise.resolve(true)   // fire-and-forget; DiskStreamingQueue handles backpressure
+  },
+  finalizeSession: async (sessionId, latencyInfo) => {
+    await _flushSession(sessionId)   // drain all pending chunks before sealing headers
+    return ipcRenderer.invoke('recording:finalize-session', sessionId, latencyInfo)
+  },
   listSessions:    () =>
     ipcRenderer.invoke('recording:list-sessions'),
   loadFile:        (filePath) =>
     ipcRenderer.invoke('recording:load-file', filePath),
 })
 
-// ─── Paso 6: Native DSP Engine (Rust) ────────────────────────────────────────
+// ─── Native DSP Engine (Rust) — binario no incluido en la build ──────────────
 //
-// El módulo .node se carga aquí porque preload tiene acceso a Node.js
-// (contextIsolation: true, nodeIntegration: false en renderer).
-//
-// Estrategia de handles:
-//   - Las instancias NativeChannelProcessor viven en este closure del preload
-//   - El renderer las identifica por handle string (channelId como key)
-//   - Evita serializar objetos nativos a través del contextBridge
-//   - Float32Array pasa por structured clone (mismo proceso, bajo costo)
-//   - SharedArrayBuffer pasa por referencia (zero-copy real)
-
-;(function loadNativeDSP() {
-  if (SAFE_MODE) return  // No cargar módulo nativo en safe mode
-
-  // __dirname no está disponible en preloads sandboxed (Electron v20+ sandbox por defecto).
-  // Envolvemos todo en try-catch para que un fallo no interrumpa el script.
-  let nativeMod
-  try {
-    const platform = process.platform   // 'win32' | 'darwin' | 'linux'
-    const arch     = process.arch       // 'x64' | 'arm64'
-    const abi      = process.platform === 'win32' ? 'msvc' : 'gnu'
-    const nodeName = `ona-dsp-engine.${platform}-${arch}-${abi}.node`
-    // __dirname puede no existir en sandbox — si lanza ReferenceError lo atrapa el catch externo.
-    const nodePath = `${__dirname}/../native/${nodeName}`
-    nativeMod = require(nodePath)
-  } catch (_) {
-    // Módulo no compilado o __dirname no disponible — NativeDSPBridge usa WebAudio fallback
-    return
-  }
-
-  // Mapa de procesadores activos: channelId → instancia Rust
-  const processors = new Map()
-
-  contextBridge.exposeInMainWorld('onaNative', {
-    engineVersion:   () => nativeMod.engineVersion(),
-    getCapabilities: () => nativeMod.getCapabilities(),
-
-    // Factory: crea instancia en el preload, retorna handle string
-    createProcessor: (channelId, sampleRate, blockSize) => {
-      const handle = String(channelId)
-      if (!processors.has(handle)) {
-        processors.set(handle, new nativeMod.NativeChannelProcessor(channelId, sampleRate, blockSize))
-      }
-      return handle
-    },
-
-    destroyProcessor: (handle) => {
-      processors.delete(handle)
-    },
-
-    // Setters — llamados raramente (automación, UI)
-    setGainDb:     (handle, db)     => processors.get(handle)?.setGainDb(db),
-    setGainLinear: (handle, gain)   => processors.get(handle)?.setGainLinear(gain),
-    setPan:        (handle, pan)    => processors.get(handle)?.setPan(pan),
-    setBypass:     (handle, bypass) => processors.get(handle)?.setBypass(bypass),
-    resetMeters:   (handle)         => processors.get(handle)?.resetMeters(),
-
-    // Hot path: Float32Array → structured clone (mismo proceso, ~microsegundos)
-    processBlock: (handle, samples) => {
-      const proc = processors.get(handle)
-      return proc ? proc.processBlock(samples) : null
-    },
-
-    // Hot path zero-copy: SharedArrayBuffer view — no serialización
-    processShared: (handle, buffer, offset, count) => {
-      const proc = processors.get(handle)
-      return proc ? proc.processShared(buffer, offset, count) : null
-    },
-
-    // Benchmark interno Rust (excluye overhead JS)
-    benchmarkProcessing: (blockSize, numBlocks, sampleRate) =>
-      nativeMod.benchmarkProcessing(blockSize, numBlocks, sampleRate),
-  })
-})();
+// La implementación Rust vive en native/ (ver native/README.md).
+// NativeDSPBridge.ts y WebAudioDSPFallback.ts detectan en tiempo de ejecución
+// si window.onaNative existe y usan WebAudio puro si no lo encuentran.
+// No se expone window.onaNative aquí: la build actual opera 100% con WebAudio.
+// Para habilitar el backend nativo, compila el crate (ver native/README.md) y
+// descomenta el bloque loadNativeDSP en una rama separada.

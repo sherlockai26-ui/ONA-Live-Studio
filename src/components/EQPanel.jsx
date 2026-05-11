@@ -9,6 +9,7 @@
  */
 
 import React, { memo, useCallback } from 'react'
+import { shallow } from 'zustand/shallow'
 import EQCurve from './EQCurve.jsx'
 import { EQ_BAND_DEFS } from '../store/mixerStore.js'
 import useMixerStore from '../store/mixerStore.js'
@@ -80,7 +81,7 @@ const BandControl = memo(function BandControl({ band, def, channelId, bandIndex,
 })
 
 function EQPanel({ channelId, channelName, onClose }) {
-  const eqBands    = useMixerStore(s => s.channels.find(c => c.id === channelId)?.eqBands ?? [])
+  const eqBands    = useMixerStore(s => s.channels.find(c => c.id === channelId)?.eqBands ?? [], shallow)
   const updateBand = useMixerStore(s => s.updateChannelEqBand)
 
   const resetAll = useCallback(() => {

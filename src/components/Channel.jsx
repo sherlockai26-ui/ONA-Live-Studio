@@ -9,7 +9,6 @@ import useMixerStore from '../store/mixerStore.js'
 import { audioEngine } from '../audio/audioEngine.js'
 
 function Channel({ channelId, inputList }) {
-  // shallow prevents re-renders when OTHER channels change in the array
   const channel          = useMixerStore(s => s.channels.find(c => c.id === channelId), shallow)
   const updateChannel    = useMixerStore(s => s.updateChannel)
   const updateChannelHpf = useMixerStore(s => s.updateChannelHpf)
@@ -19,42 +18,57 @@ function Channel({ channelId, inputList }) {
   const [gateOpen,    setGateOpen]    = useState(false)
   const [editingName, setEditingName] = useState(false)
 
-  if (!channel) return null
-  const { name, color, volume, pan, muted, soloed, inputSource, toMain, toSub, hpf, reverbSend, delaySend, compressor, gate } = channel
+  const getLevel = useCallback(() => {
+    if (!audioEngine.initialized) return 0
+    try { return audioEngine.getMeterBuffer()[channelId - 1] ?? 0 } catch { return 0 }
+  }, [channelId])
 
-  // Store + AudioEngine en una sola llamada
-  const set = (updates) => {
+  // All callbacks above the early return (Rules of Hooks).
+  // Read current channel values from store inside callbacks to avoid stale closures
+  // without putting them in the dep array (which would recreate on every fader move).
+  const set = useCallback((updates) => {
+    const ch = useMixerStore.getState().channels.find(c => c.id === channelId)
+    if (!ch) return
     updateChannel(channelId, updates)
     if (!audioEngine.initialized) return
     if ('volume' in updates || 'muted' in updates) {
-      const v = 'volume' in updates ? updates.volume : volume
-      const m = 'muted'  in updates ? updates.muted  : muted
-      audioEngine.setChannelVolume(channelId, v, m)
+      audioEngine.setChannelVolume(
+        channelId,
+        'volume' in updates ? updates.volume : ch.volume,
+        'muted'  in updates ? updates.muted  : ch.muted,
+      )
     }
     if ('pan' in updates) audioEngine.setChannelPan(channelId, updates.pan)
     if ('toMain' in updates || 'toSub' in updates) {
       audioEngine.setChannelRouting(
         channelId,
-        'toMain' in updates ? updates.toMain : toMain,
-        'toSub'  in updates ? updates.toSub  : toSub,
+        'toMain' in updates ? updates.toMain : ch.toMain,
+        'toSub'  in updates ? updates.toSub  : ch.toSub,
       )
     }
-  }
+    if ('soloed' in updates) audioEngine.setChannelSolo(channelId, Boolean(updates.soloed), 'pfl')
+    if ('muted' in updates && !('volume' in updates)) {
+      // muted-only path is already handled above by setChannelVolume
+    }
+  }, [channelId, updateChannel])
 
-  const setHpf = (updates) => {
+  const setHpf = useCallback((updates) => {
     updateChannelHpf(channelId, updates)
     if (audioEngine.initialized) audioEngine.setChannelHpf(channelId, updates)
-  }
+  }, [channelId, updateChannelHpf])
 
-  const setReverbSend = (v) => {
+  const setReverbSend = useCallback((v) => {
     updateChannel(channelId, { reverbSend: v })
     if (audioEngine.initialized) audioEngine.setChannelReverbSend(channelId, v)
-  }
+  }, [channelId, updateChannel])
 
-  const setDelaySend = (v) => {
+  const setDelaySend = useCallback((v) => {
     updateChannel(channelId, { delaySend: v })
     if (audioEngine.initialized) audioEngine.setChannelDelaySend(channelId, v)
-  }
+  }, [channelId, updateChannel])
+
+  if (!channel) return null
+  const { name, color, volume, pan, muted, soloed, inputSource, toMain, toSub, hpf, reverbSend, delaySend, compressor, gate } = channel
 
   return (
     <>
@@ -98,10 +112,7 @@ function Channel({ channelId, inputList }) {
         <div className="flex items-end gap-2 px-1">
           <ConsoleMeter
             channelId={channelId}
-            getLevel={() => {
-              if (!audioEngine.initialized) return 0
-              try { return audioEngine.getMeterBuffer()[channelId - 1] ?? 0 } catch { return 0 }
-            }}
+            getLevel={getLevel}
             width={10}
             height={80}
           />

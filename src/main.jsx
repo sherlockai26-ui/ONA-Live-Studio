@@ -36,10 +36,13 @@ if (SAFE_MODE) {
   window.__ONA_METERING_DISABLED = true
 } else {
   console.log('[BOOT] CLEAN START')
-  // Expose benchmark APIs in non-safe mode
-  import('./ui/UIBenchmark').then(m => m.exposeUIBenchAPI()).catch(() => {})
-  import('./live/LiveBenchmark').then(m => m.exposeLiveBenchAPI()).catch(() => {})
+  // Operational network API — available in all builds for remote diagnostics
   import('./network/client/NetworkClient').then(m => m.networkClient.exposeConsoleAPI()).catch(() => {})
+  // Benchmark APIs: only in non-production builds to avoid window globals and GC overhead
+  if (process.env.NODE_ENV !== 'production') {
+    import('./ui/UIBenchmark').then(m => m.exposeUIBenchAPI()).catch(() => {})
+    import('./live/LiveBenchmark').then(m => m.exposeLiveBenchAPI()).catch(() => {})
+  }
 }
 
 // ── Crash logging global — renderer ──────────────────────────────────────────

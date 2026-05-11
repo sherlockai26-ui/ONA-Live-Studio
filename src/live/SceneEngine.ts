@@ -94,8 +94,9 @@ class SceneEngine {
       const rawSnap = sceneManager.prepareRecall(name)
       if (!rawSnap) return this._failResult(name, 'Scene not found')
 
-      // 2. Validate (unless explicitly skipped)
-      if (!opts.skipValidation) {
+      // 2. Validate — skipValidation is only honoured in development builds
+      const _isDev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development'
+      if (!opts.skipValidation || !_isDev) {
         const val = recallValidator.validate(rawSnap, name)
         if (!val.ok) {
           this._recalling = false
