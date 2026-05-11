@@ -226,23 +226,12 @@ class AudioEngineSingleton {
       }
       console.log(`[ENGINE] ${numChannels} canales listos`)
 
-      // 6b. WorkletManager — upgrade gates al audio thread
-      try {
-        ;(window as any).electronAPI?.crashLog?.('[ENGINE] checkpoint: workletManager.initialize START')
-        await workletManager.initialize(rawCtx)
-        ;(window as any).electronAPI?.crashLog?.('[ENGINE] checkpoint: workletManager.initialize OK')
-        let upgraded = 0
-        for (const strip of this._strips.values()) {
-          ;(window as any).electronAPI?.crashLog?.(`[ENGINE] checkpoint: upgradeGate ch${strip.id} START`)
-          if (strip.upgradeGateToWorklet(workletManager)) upgraded++
-          ;(window as any).electronAPI?.crashLog?.(`[ENGINE] checkpoint: upgradeGate ch${strip.id} OK`)
-        }
-        console.log(`[ENGINE] WorkletManager listo — ${upgraded}/${this._strips.size} gates → worklet`)
-        ;(window as any).electronAPI?.crashLog?.(`[ENGINE] checkpoint: all gates upgraded (${upgraded}/${this._strips.size})`)
-      } catch (err) {
-        console.warn('[ENGINE] WorkletManager falló — gate en main thread:', err)
-        ;(window as any).electronAPI?.crashLog?.(`[ENGINE] WorkletManager error: ${err}`)
-      }
+      // 6b. WorkletManager — deshabilitado en Electron/Windows.
+      // audioWorklet.addModule() provoca ACCESS_VIOLATION (-1073741819) en el hilo
+      // de audio de Chromium en esta configuración Electron + WASAPI + Windows.
+      // El gate corre en modo main-thread vía tickMeter() en el RAF loop.
+      // Gates funcionales — sin impacto en el usuario.
+      console.log('[ENGINE] WorkletManager — omitido (modo main-thread gate activo)')
 
       // 7. Estado inicial maestro
       const s = initialState
