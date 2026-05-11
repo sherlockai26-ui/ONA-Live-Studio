@@ -39,8 +39,9 @@ class AudioBridge {
     return engineSingleton.initialize(numChannels, initialState)
   }
 
-  get initialized(): boolean { return engineSingleton.initialized }
-  get state() { return engineSingleton.state }
+  get initialized(): boolean        { return engineSingleton.initialized }
+  get state()                       { return engineSingleton.state }
+  get isMeteringReady(): boolean    { return engineSingleton.meteringEngine.isReady() }
 
   suspend(): void  { engineSingleton.suspend() }
   resume(): void   { engineSingleton.resume() }

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { bl }            from './util/bootlog'
 import Channel           from './components/Channel.jsx'
 import MasterBus         from './components/MasterBus.jsx'
 import FXRack            from './components/FXRack.jsx'
@@ -25,6 +26,7 @@ export default function App() {
   const [engineReady,   setEngineReady]   = useState(false)
   const [engineLoading, setEngineLoading] = useState(false)
   const [initError,     setInitError]     = useState(null)
+  const [uiReady,       setUiReady]       = useState(false)
   const syncRef = useRef(false)
 
   // ── Inicializar AudioEngine en primer clic ────────────────────────────────
@@ -39,8 +41,12 @@ export default function App() {
       setEngineLoading(true)
       console.log('[BOOT] Iniciando AudioEngine...')
       try {
+        bl('App.jsx', 'init-1', 'audioEngine.initialize() — LLAMANDO')
         await audioEngine.initialize(channels.length, useMixerStore.getState())
+        bl('App.jsx', 'init-2', 'audioEngine.initialize() — RETORNÓ SIN EXCEPCIÓN')
+        bl('App.jsx', 'init-3', 'setEngineReady(true) — ANTES')
         setEngineReady(true)
+        bl('App.jsx', 'init-4', 'setEngineReady(true) — DESPUÉS')
         setInitError(null)
         console.log('[BOOT] AudioEngine listo')
 
@@ -81,6 +87,23 @@ export default function App() {
     const handler = () => init()
     window.addEventListener('click', handler, { once: true })
     return () => window.removeEventListener('click', handler)
+  }, [])
+
+  // ── uiReady — activar medidores solo después de que el motor se estabilice ────
+  // RAF diferido: garantiza al menos un frame de pintado vacío antes de montar
+  // ConsoleMeter y ChannelMeter, eliminando la carrera con AnalyserNodes.
+  useEffect(() => {
+    if (!engineReady) return
+    const id = requestAnimationFrame(() => {
+      bl('App.jsx', 'ui-ready', 'uiReady=true — medidores autorizados a montar')
+      setUiReady(true)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [engineReady])
+
+  // ── Checkpoint de render inicial ─────────────────────────────────────────────
+  useEffect(() => {
+    bl('App.jsx', 'render-1', 'React tree montada — canales + sidebar MOUNTED')
   }, [])
 
   // ── Networking multi-dispositivo (solo si engine listo y no safe mode) ────
@@ -219,7 +242,7 @@ export default function App() {
       {/* Layout principal */}
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-1 overflow-x-auto overflow-y-hidden border-r border-[#2a2a2a]">
-          {channels.map(ch => (
+          {uiReady && channels.map(ch => (
             <Channel key={ch.id} channelId={ch.id} inputList={inputList} />
           ))}
         </div>

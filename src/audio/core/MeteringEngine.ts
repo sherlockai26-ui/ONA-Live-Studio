@@ -33,6 +33,9 @@ export class MeteringEngine {
   private _strips:    Map<number, ChannelStrip> | null = null
   private _busEngine: BusEngine | null                 = null
   private _cbs = new Set<MeterCallback>()
+  private _ready = false
+
+  isReady(): boolean { return this._ready }
 
   // Paso 7: objeto pre-allocado con todas las keys — sin new {} en RAF loop
   private _data: Record<string, number> = {}
@@ -132,6 +135,9 @@ export class MeteringEngine {
         this._buf[7] = sb
       } catch (_) {}
 
+      // Marcar ready después del primer tick exitoso
+      if (!this._ready) this._ready = true
+
       // Notificar callbacks legacy (síncrono — data object reutilizado)
       if (!(window as any).__ONA_METERING_DISABLED) {
         for (const cb of this._cbs) { try { cb(this._data) } catch (_) {} }
@@ -151,6 +157,7 @@ export class MeteringEngine {
       cancelAnimationFrame(this._rafId)
       this._rafId = null
     }
+    this._ready     = false
     this._strips    = null
     this._busEngine = null
     this._cbs.clear()

@@ -97,6 +97,7 @@ import { motorFaderManager }          from '../../control/MotorFaderManager'
 import { exposeControlBenchAPI, generateControlReport } from '../../control/ControlBenchmark'
 import type { ControlAction }         from '../../control/MidiMapper'
 import type { EngineSnapshot }        from '../state/StateEngine'
+import { bl }                         from '../../util/bootlog'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -143,7 +144,8 @@ class AudioEngineSingleton {
   // ── Getters ──────────────────────────────────────────────────────────────────
 
   get state(): EngineState   { return this._state }
-  get initialized(): boolean { return this._state === 'running' }
+  get initialized(): boolean          { return this._state === 'running' }
+  get meteringEngine(): MeteringEngine { return this._meteringEngine }
 
   // ── Inicialización ───────────────────────────────────────────────────────────
 
@@ -220,9 +222,11 @@ class AudioEngineSingleton {
       console.log('[ENGINE] Global FX listos')
 
       // 6. Canales — rawCtx habilita Phase 2 (native nodes en ChannelStrip)
+      bl('AudioEngineSingleton.ts', 'channels-start', `creando ${numChannels} ChannelStrips + AnalyserNodes`)
       for (let i = 1; i <= numChannels; i++) {
         const s = initialState.channels?.find((c: any) => c.id === i) ?? {}
         this._buildAndRegisterChannel(i, s, rawCtx)
+        bl('AudioEngineSingleton.ts', 'channel-built', `ChannelStrip ch${i} construido`)
       }
       console.log(`[ENGINE] ${numChannels} canales listos`)
 
@@ -243,7 +247,13 @@ class AudioEngineSingleton {
 
       // 8. Metering + profiling
       if (!(window as any).__ONA_METERING_DISABLED) {
+        bl('AudioEngineSingleton.ts', 'metering-start', 'MeteringEngine.start() — LLAMANDO')
         this._meteringEngine.start(this._strips, this._busEngine)
+        bl('AudioEngineSingleton.ts', 'metering-done', 'MeteringEngine.start() — RETORNÓ')
+        // Esperar 200ms para que el motor de audio se asiente y el primer tick de metering
+        // complete antes de que React pueda montar componentes que acceden a AnalyserNodes.
+        await new Promise(r => setTimeout(r, 200))
+        bl('AudioEngineSingleton.ts', 'metering-settle', 'settle 200ms — AudioNodes estabilizados')
         console.log('[ENGINE] MeteringEngine iniciado')
       }
       perfMonitor.start()

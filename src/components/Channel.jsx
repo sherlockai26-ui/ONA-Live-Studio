@@ -1,4 +1,5 @@
-import React, { useState, useCallback, memo } from 'react'
+import React, { useState, useCallback, useEffect, memo } from 'react'
+import { bl } from '../util/bootlog'
 import { shallow } from 'zustand/shallow'
 import EQPanel      from './EQPanel.jsx'
 import CompPanel    from './CompPanel.jsx'
@@ -66,6 +67,10 @@ function Channel({ channelId, inputList }) {
     updateChannel(channelId, { delaySend: v })
     if (audioEngine.initialized) audioEngine.setChannelDelaySend(channelId, v)
   }, [channelId, updateChannel])
+
+  useEffect(() => {
+    bl('Channel.jsx', 'mount', `Ch${channelId} MONTADO — antes de ConsoleMeter RAF`)
+  }, [channelId])
 
   if (!channel) return null
   const { name, color, volume, pan, muted, soloed, inputSource, toMain, toSub, hpf, reverbSend, delaySend, compressor, gate } = channel

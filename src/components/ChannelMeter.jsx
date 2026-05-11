@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react'
+import { bl } from '../util/bootlog'
 import { audioEngine } from '../audio/audioEngine.js'
 import { resourceManager } from '../audio/scalability/ResourceManager'
 import { performanceModes } from '../audio/scalability/PerformanceModes'
@@ -77,7 +78,11 @@ export default function ChannelMeter({ channelId, width = 10, height = 80 }) {
 
     if (!audioEngine || typeof audioEngine.onMeterUpdate !== 'function') return
 
+    bl('ChannelMeter.jsx', 'unsub', `Ch${channelId} subscribing onMeterUpdate`)
     const unsub = audioEngine.onMeterUpdate((data) => {
+      // No leer datos hasta que el primer tick de MeteringEngine haya completado
+      if (!audioEngine.isMeteringReady) return
+
       // Skip update when off-screen
       if (!visibleRef.current) return
 

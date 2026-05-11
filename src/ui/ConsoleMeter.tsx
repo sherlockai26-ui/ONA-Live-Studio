@@ -10,9 +10,11 @@
  */
 
 import React, { useRef, useEffect, useCallback } from 'react'
+import { bl }              from '../util/bootlog'
 import { uiLayerManager }  from './UILayerManager'
 import { resourceManager } from '../audio/scalability/ResourceManager'
 import { performanceModes } from '../audio/scalability/PerformanceModes'
+import { audioEngine }     from '../audio/audioEngine'
 
 export interface ConsoleMeterProps {
   channelId:   number | string
@@ -75,8 +77,12 @@ export function ConsoleMeter({
 
     const meterId = typeof channelId === 'number' ? `ch${channelId}` : String(channelId)
 
+    bl('ConsoleMeter.tsx', 'register', `${meterId} registrando callback RAF en uiLayerManager`)
     const id = `meter_${channelId}`
     const unsub = uiLayerManager.register('metering', (now) => {
+      // No leer AnalyserNodes hasta que el primer tick de MeteringEngine haya completado
+      if (!(audioEngine as any).isMeteringReady) return
+
       // Skip draw when scrolled off screen
       if (!visibleRef.current) return
 
