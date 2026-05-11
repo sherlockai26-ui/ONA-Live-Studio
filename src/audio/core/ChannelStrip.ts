@@ -79,13 +79,14 @@ class MeterTap {
 
   constructor(ctx?: AudioContext) {
     if (ctx) {
-      const a = (Tone.getContext() as any).createAnalyser()
-      a.fftSize = 256
-      a.smoothingTimeConstant = 0
-      this._analyser    = a
+      // AnalyserNode deshabilitado — causa ACCESS_VIOLATION con WASAPI en Electron/Windows.
+      // GainNode pasante preserva la cadena de audio sin llamar getFloatTimeDomainData().
+      const g = (Tone.getContext() as any).createGain()
+      g.gain.value = 1
+      this._analyser    = null
       this._toneMeter   = null
-      this._analyserBuf = new Float32Array(a.fftSize)
-      this.node = a
+      this._analyserBuf = new Float32Array(0)
+      this.node = g
     } else {
       this._analyser    = null
       this._toneMeter   = new Tone.Meter({ normalRange: false })

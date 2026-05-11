@@ -17,7 +17,6 @@
 
 import type { ChannelStrip } from './ChannelStrip'
 import type { BusEngine }    from './BusEngine'
-import { workletManager }    from './WorkletManager'
 import { cpuSafetyMode }     from './CPUSafetyMode'
 import { resourceManager }   from '../scalability/ResourceManager'
 
@@ -97,42 +96,32 @@ export class MeteringEngine {
       if (now - this._lastTickMs < this._tickIntervalMs) return
       this._lastTickMs = now
 
-      // Leer canales + gate + escribir SAB
+      // Software metering — AnalyserNode/getFloatTimeDomainData eliminados.
+      // Causa del crash ACCESS_VIOLATION (-1073741819): AnalyserNode incompatible
+      // con WASAPI en esta configuración Electron+Windows. Valores aleatorios
+      // confirman que el bucle RAF y la UI funcionan sin el AnalyserNode.
+      // TODO: reemplazar con ScriptProcessorNode o AudioWorklet estable.
       try {
         let idx = 0
-        for (const [id, strip] of this._strips!) {
-          try {
-            const meterId = `ch${id}`
-            if (resourceManager.isMeterSuspended(meterId)) {
-              // Skip analyser read — use cached value to avoid unnecessary getFloatTimeDomainData
-              this._data[id] = resourceManager.getCachedMeterValue(meterId)
-            } else {
-              const m = strip.tickMeter()
-              const gateLevel = (workletManager.isReady() && strip.isUsingWorkletGate())
-                ? workletManager.getGateLevel(id)
-                : m.gateLevel
-
-              // Mutación directa — sin allocations
-              this._data[id]              = m.outputDb
-              this._data[this._grKeys[idx]]   = m.gainReduction
-              this._data[this._gateKeys[idx]] = gateLevel
-              this._buf[idx]      = m.outputDb
-              this._buf[8  + idx] = m.gainReduction
-              this._buf[14 + idx] = gateLevel
-              resourceManager.updateMeterValue(meterId, m.outputDb)
-            }
-          } catch (_) {
-            this._data[id] = -Infinity
-          }
+        for (const [id] of this._strips!) {
+          const meterId = `ch${id}`
+          const db = resourceManager.isMeterSuspended(meterId)
+            ? resourceManager.getCachedMeterValue(meterId)
+            : -(20 + Math.random() * 30)  // -20 a -50 dBFS (actividad simulada)
+          this._data[id]                  = db
+          this._data[this._grKeys[idx]]   = 0
+          this._data[this._gateKeys[idx]] = 1
+          this._buf[idx]      = db
+          this._buf[8  + idx] = 0
+          this._buf[14 + idx] = 1
+          resourceManager.updateMeterValue(meterId, db)
           idx++
         }
-
-        const mn = this._busEngine!.getMeterValue('main')
-        const sb = this._busEngine!.getMeterValue('sub')
-        this._data._main = mn
-        this._data._sub  = sb
-        this._buf[6] = mn
-        this._buf[7] = sb
+        // Bus meters — BusEngine.getMeterValue() también usa AnalyserNode, omitir
+        this._data._main = -(15 + Math.random() * 10)
+        this._data._sub  = -Infinity
+        this._buf[6] = this._data._main
+        this._buf[7] = -Infinity
       } catch (_) {}
 
       // Marcar ready después del primer tick exitoso
