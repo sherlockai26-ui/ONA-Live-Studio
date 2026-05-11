@@ -16,19 +16,22 @@ class DSPGraphEngine {
   private _nodes = new Map<string, any>()
   private _edges = new Map<string, Set<string>>()
 
-  // Handles native AudioNode → Tone wrapper connections (extracts .input)
+  // Walk the Tone wrapper chain until a native AudioNode is reached.
+  // Checks _nativeAudioNode first, then .input — max 4 hops to avoid runaway loops.
+  // Handles all combinations: native→native, native→Tone, Tone→Tone, Tone→native.
   private static _unwrap(node: any): any {
-    // Tone wrapper → usar input si existe
-    const n = node?.input ?? node
-
-    // Si sigue siendo wrapper Tone, extraer nodo nativo real
-    return n?._nativeAudioNode ?? n
+    let n: any = node
+    for (let i = 0; i < 4 && n && !(n instanceof AudioNode); i++) {
+      const next = n._nativeAudioNode ?? n.input
+      if (!next || next === n) break
+      n = next
+    }
+    return n
   }
 
   private static _c(src: any, dst: any): void {
     const from = DSPGraphEngine._unwrap(src)
     const to   = DSPGraphEngine._unwrap(dst)
-
     from.connect(to)
   }
 
@@ -72,7 +75,7 @@ class DSPGraphEngine {
     const to   = this._nodes.get(toId)
     if (!from || !to) return false
     try {
-      from.disconnect(to)
+      DSPGraphEngine._unwrap(from).disconnect(DSPGraphEngine._unwrap(to))
       this._edges.get(fromId)?.delete(toId)
       return true
     } catch (_) { return false }

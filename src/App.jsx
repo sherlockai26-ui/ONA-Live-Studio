@@ -68,8 +68,11 @@ export default function App() {
         // getUserMedia is safe after Tone.start() creates the AudioContext
         refreshDeviceLabels().catch(() => {})
       } catch (err) {
+        const msg = err?.message ?? String(err)
         console.error('[BOOT] AudioEngine FAILED:', err)
-        setInitError(err.message ?? String(err))
+        setInitError(msg)
+        // Persist crash info to disk so GPU flag can correlate with audio init failures
+        try { window.electronAPI?.crashLog?.(`[BOOT] AudioEngine FAILED: ${msg}`) } catch (_) {}
       } finally {
         setEngineLoading(false)
       }

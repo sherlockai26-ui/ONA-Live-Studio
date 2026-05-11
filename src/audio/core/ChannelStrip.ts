@@ -406,12 +406,13 @@ export class ChannelStrip {
     if (!gateWorklet) return false
 
     try {
-      try { this._hpf.disconnect(this._gateNode) } catch (_) {}
+      // Real chain: hpf → lpf → gateNode — disconnect lpf from old gate, not hpf
+      try { this._lpf.disconnect(this._gateNode) } catch (_) {}
       try { (this._gateNode as any).disconnect?.() } catch (_) {}
       try { (this._gateNode as any).dispose?.()    } catch (_) {}
 
-      // HPF is native BiquadFilterNode — direct connect ✓
-      this._hpf.connect(gateWorklet)
+      // Reconnect: lpf → gateWorklet (preserving hpf→lpf)
+      this._lpf.connect(gateWorklet)
 
       const compInput = (this._compressor as any).input ?? this._compressor
       gateWorklet.connect(compInput)

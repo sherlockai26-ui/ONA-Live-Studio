@@ -38,34 +38,50 @@ process.on('unhandledRejection', (reason) => {
   writeCrashLog('MAIN_REJECTION', msg)
 })
 
-// ── GPU: aceleración por defecto con fallback automático tras crash ──────────
-// Si el proceso GPU crasheó en un arranque anterior (detectado por flag en TEMP),
-// deshabilitamos los switches de rendering visual para esa sesión y borramos el flag
-// (el siguiente arranque vuelve a intentar GPU). Así los canvas de medidores y
-// curvas EQ usan GPU siempre que esté disponible, descargando la CPU.
+// ── GPU: patrón write-before / delete-on-exit ────────────────────────────────
+// Problema con el enfoque reactivo anterior: el flag solo se escribía DESPUÉS
+// del crash, por lo que el primer crash siempre ocurría igualmente.
+//
+// Nuevo patrón:
+//   - Al arrancar SIN flag: esta sesión usa GPU → escribimos el flag ("en progreso")
+//   - Si la app cierra limpiamente (before-quit): borramos el flag → próximo arranque usa GPU
+//   - Si la app crashea antes de before-quit: el flag persiste → próximo arranque usa CPU
+//   - Al arrancar CON flag: sesión anterior no terminó limpiamente → CPU mode
+//     Se borra el flag para que el siguiente arranque vuelva a intentar GPU.
+//
+// NOTA: disable-software-rasterizer NO debe usarse junto a disable-gpu —
+// deshabilita el renderer de software (fallback CPU), dejando a Chromium sin renderer.
 const _gpuFlagPath = path.join(
   process.env.TEMP || process.env.TMPDIR || '/tmp',
   'ona_live_gpu_crash_flag'
 )
 
+// FIX 5: Siempre deshabilitar GPU para evitar crash ACCESS_VIOLATION en renderer.
+// Una vez estabilizado el WebAudio graph, esto puede revertirse al patrón condicional.
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('disable-gpu-compositing')
+app.commandLine.appendSwitch('disable-gpu-rasterization')
+console.log('[ONA MAIN] GPU deshabilitado (modo CPU forzado para estabilidad)')
+
+// Flag de crash aún útil para telemetría: detecta si la sesión terminó limpiamente
 if (fs.existsSync(_gpuFlagPath)) {
-  app.commandLine.appendSwitch('disable-gpu')
-  app.commandLine.appendSwitch('disable-gpu-compositing')
-  app.commandLine.appendSwitch('disable-gpu-rasterization')
-  app.commandLine.appendSwitch('disable-software-rasterizer')
   try { fs.unlinkSync(_gpuFlagPath) } catch (_) {}
-  console.log('[ONA MAIN] Modo CPU — crash GPU detectado en arranque anterior; se reintentará GPU en el próximo arranque')
+  console.log('[ONA MAIN] Sesión anterior no terminó limpiamente (crash detectado)')
+} else {
+  try { fs.writeFileSync(_gpuFlagPath, String(Date.now()), 'utf-8') } catch (_) {}
 }
 
-// Escribir flag al detectar crash del proceso GPU — activa modo CPU en la siguiente sesión
+// Salida limpia → borrar flag; la próxima sesión usará GPU
+app.on('before-quit', () => {
+  try { fs.unlinkSync(_gpuFlagPath) } catch (_) {}
+})
+
+// GPU crash durante la sesión: el flag ya está escrito, solo loguear
 app.on('child-process-gone', (_event, details) => {
   if (details.type !== 'GPU') return
-  try { fs.writeFileSync(_gpuFlagPath, String(Date.now()), 'utf-8') } catch (_) {}
   console.warn(`[ONA MAIN] GPU process gone (reason=${details.reason}) — próximo arranque usará modo CPU`)
 })
-// Compatibilidad con versiones antiguas de Electron (< 14)
 app.on('gpu-process-crashed', (_event, killed) => {
-  try { fs.writeFileSync(_gpuFlagPath, String(Date.now()), 'utf-8') } catch (_) {}
   console.warn(`[ONA MAIN] GPU crashed (killed=${killed}) — próximo arranque usará modo CPU`)
 })
 

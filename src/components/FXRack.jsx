@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react'
+import React, { memo, useCallback, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import useMixerStore from '../store/mixerStore.js'
 import { audioEngine } from '../audio/audioEngine.js'
@@ -36,9 +36,14 @@ function FXRack() {
   const fxReturn = useMixerStore(useShallow(s => s.fx.fxReturn))
   const updateFx = useMixerStore(s => s.updateFx)
 
-  // Only subscribe to the fields needed for per-channel send rows
-  const channelSends = useMixerStore(
-    useShallow(s => s.channels.map(c => ({ id: c.id, name: c.name, reverbSend: c.reverbSend, delaySend: c.delaySend }))),
+  // s.channels reference is stable (same object) until a channel is updated.
+  // useMemo derives the send rows only when the channels array reference changes,
+  // avoiding the infinite loop that useShallow(s => s.channels.map(...)) causes
+  // when the new selector function object resets useSyncExternalStore's internal memo.
+  const channels      = useMixerStore(s => s.channels)
+  const channelSends  = useMemo(
+    () => channels.map(c => ({ id: c.id, name: c.name, reverbSend: c.reverbSend, delaySend: c.delaySend })),
+    [channels],
   )
   const updateChannel = useMixerStore(s => s.updateChannel)
 
