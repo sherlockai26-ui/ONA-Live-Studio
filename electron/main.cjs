@@ -57,11 +57,19 @@ const _gpuFlagPath = path.join(
 )
 
 // FIX 5: Siempre deshabilitar GPU para evitar crash ACCESS_VIOLATION en renderer.
-// Una vez estabilizado el WebAudio graph, esto puede revertirse al patrón condicional.
 app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('disable-gpu-compositing')
 app.commandLine.appendSwitch('disable-gpu-rasterization')
 console.log('[ONA MAIN] GPU deshabilitado (modo CPU forzado para estabilidad)')
+
+// FIX 7: Forzar backend de audio WaveOut en lugar de WASAPI.
+// WASAPI provoca ACCESS_VIOLATION (-1073741819) en el hilo de audio nativo de Chromium
+// en esta configuración Electron + Windows. WaveOut es el backend más básico y estable.
+app.commandLine.appendSwitch('force-wave-audio')
+app.commandLine.appendSwitch('disable-features', 'WASAPIAudio')
+app.commandLine.appendSwitch('try-supported-channel-layouts', '1')
+app.commandLine.appendSwitch('audio-buffer-size', '1024')
+console.log('[ONA MAIN] Audio: WaveOut forzado, WASAPI deshabilitado, buffer=1024')
 
 // Flag de crash aún útil para telemetría: detecta si la sesión terminó limpiamente
 if (fs.existsSync(_gpuFlagPath)) {

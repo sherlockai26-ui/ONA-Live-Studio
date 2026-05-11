@@ -1,0 +1,9 @@
+[2026-05-11T09:26:36.908Z] [MAIN_CRASH] TypeError: Cannot read properties of undefined (reading 'commandLine')
+    at Object.<anonymous> (D:\ONA Live Studio\PROYECTO\ONA-Live-Studio\electron\main.cjs:61:5)
+    at Module._compile (node:internal/modules/cjs/loader:1271:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1326:10)
+    at Module.load (node:internal/modules/cjs/loader:1126:32)
+    at Module._load (node:internal/modules/cjs/loader:967:12)
+    at c._load (node:electron/js2c/node_init:2:13672)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:101:12)
+    at node:internal/main/run_main_module:23:47

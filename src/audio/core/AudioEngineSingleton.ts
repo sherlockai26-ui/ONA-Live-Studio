@@ -103,6 +103,7 @@ import { bl }                         from '../../util/bootlog'
 
 type EngineState   = 'uninitialized' | 'initializing' | 'running' | 'suspended' | 'destroyed'
 type MeterCallback = (data: Record<string, number>) => void
+export type EngineProgressEvent = { phase: number; total: number } | 'ready'
 
 // ─── AudioEngineSingleton ─────────────────────────────────────────────────────
 
@@ -141,171 +142,88 @@ class AudioEngineSingleton {
   private _reverbGenerating   = false
   private _reverbDecayPending: number | null = null
 
+  // Phased init (arranque escalonado)
+  private _progressCbs  = new Set<(ev: EngineProgressEvent) => void>()
+  private _numChannels  = 6
+  private _initialState: any = {}
+
   // ── Getters ──────────────────────────────────────────────────────────────────
 
   get state(): EngineState   { return this._state }
   get initialized(): boolean          { return this._state === 'running' }
   get meteringEngine(): MeteringEngine { return this._meteringEngine }
 
+  /** Suscribirse a eventos de progreso del arranque escalonado. Retorna función de limpieza. */
+  onProgress(cb: (ev: EngineProgressEvent) => void): () => void {
+    this._progressCbs.add(cb)
+    return () => this._progressCbs.delete(cb)
+  }
+
+  private _emitProgress(ev: EngineProgressEvent): void {
+    for (const cb of this._progressCbs) { try { cb(ev) } catch (_) {} }
+  }
+
   // ── Inicialización ───────────────────────────────────────────────────────────
 
   async initialize(numChannels = 6, initialState: any = {}): Promise<void> {
     if (this._state !== 'uninitialized') return
     this._state = 'initializing'
-    console.log('[ENGINE] initialize() — start')
+    console.log('[ENGINE] initialize() — arranque escalonado en 5 fases')
+
+    // Guardar para uso en fases 2-5
+    this._numChannels  = numChannels
+    this._initialState = initialState
 
     try {
-      // 0. StateEngine — cargar estado inicial antes de construir nodos DSP
+      // 0. StateEngine
       stateEngine.loadFromInitialState(initialState)
 
+      // ── FASE 1: AudioContext + infraestructura base ────────────────────────────
       console.log('[ENGINE] Tone.start()')
       await Tone.start()
       const rawCtx = (Tone.context as any).rawContext as AudioContext
       this._rawCtx = rawCtx
       console.log(`[ENGINE] AudioContext running — sampleRate: ${rawCtx.sampleRate}Hz`)
 
-      // 1. HAL + ClockManager
+      // Isolation mode (solo diagnóstico — window.__ONA_ISOLATION_STEP = 1..5)
+      const _isoStep: number | null =
+        typeof (window as any).__ONA_ISOLATION_STEP === 'number'
+          ? (window as any).__ONA_ISOLATION_STEP : null
+      if (_isoStep !== null && _isoStep >= 1 && _isoStep <= 5) {
+        await this._isolationInit(rawCtx, _isoStep)
+        this._state = 'running'
+        return
+      }
+
+      // HAL + ClockManager + DSP infra + NativeDSPBridge (sin AudioNodes pesados)
       hal.initialize(rawCtx)
       hal.onStreamReady((channelId, stream) => this.connectMediaStream(channelId, stream))
       hal.onDeviceDisconnected((channelId, deviceId) => {
         console.warn(`[ENGINE] Canal ${channelId} sin dispositivo (${deviceId.slice(0, 8)})`)
       })
       clockManager.attach(rawCtx)
-
-      // 2. DSP infrastructure (Paso 4 + 5)
       dspCommandBus.initialize()
       dspScheduler.attach(rawCtx)
       dspParamMgr.attach(rawCtx)
       dspWatchdog.attach(rawCtx)
-
-      // 3. Probe nativo (experimental, sin bloquear init)
       nativeBridge.probe().catch(() => {})
-
-      // 3b. Native DSP Bridge (Paso 6) — Rust engine o fallback WebAudio
       nativeDSPBridge.initialize(rawCtx.sampleRate, 128)
       exposeBenchmarkAPI(rawCtx.sampleRate, 128)
       exposeBenchmarkRunnerAPI()
-      console.log(`[ENGINE] NativeDSPBridge: ${nativeDSPBridge.backend}`)
 
-      // 4. Buses
-      this._busEngine.initialize()
-      dspGraph.register('bus_main', this._busEngine.getBus('main')!.gain)
-      dspGraph.register('bus_sub',  this._busEngine.getBus('sub')!.gain)
-      console.log('[ENGINE] Buses listos')
+      // Probe GainNode — da algo al hilo de audio nativo para renderizar sin nodos pesados
+      const _probe = rawCtx.createGain()
+      _probe.gain.value = 0
+      _probe.connect(rawCtx.destination)
 
-      // 4b. Routing engines (Paso 9)
-      const mainIn = this._busEngine.getBus('main')!.gain as GainNode
-      const subIn  = this._busEngine.getBus('sub')!.gain  as GainNode
-      auxBusEngine.initialize(rawCtx)
-      subgroupEngine.initialize(rawCtx, mainIn, subIn)
-      cueBus.initialize(rawCtx)
-      routingMatrix.initialize(rawCtx, rawCtx.destination)
-      // Register matrix sources
-      routingMatrix.registerSource('main',  this._busEngine.getBus('main')!.fader as AudioNode)
-      routingMatrix.registerSource('sub',   this._busEngine.getBus('sub')!.fader  as AudioNode)
-      routingMatrix.registerSource('cue',   cueBus.fader!)
-      for (let i = 1; i <= NUM_AUX; i++) {
-        routingMatrix.registerSource(`aux${i}` as any, auxBusEngine.getBus(i)!.fader)
-      }
-      for (let i = 1; i <= NUM_GROUPS; i++) {
-        routingMatrix.registerSource(`group${i}` as any, subgroupEngine.getGroup(i)!.fader)
-      }
-      console.log('[ENGINE] Routing engines listos')
-
-      // 4c. FX Bus Engine (Paso 12) — 4 professional FX buses
-      const mainBusGain = this._busEngine.getBus('main')!.gain as GainNode
-      fxBusEngine.initialize(rawCtx, mainBusGain)
-      console.log('[ENGINE] FX buses listos')
-
-      // 5. Global FX
-      await this._buildGlobalFx()
-      console.log('[ENGINE] Global FX listos')
-
-      // 6. Canales — rawCtx habilita Phase 2 (native nodes en ChannelStrip)
-      bl('AudioEngineSingleton.ts', 'channels-start', `creando ${numChannels} ChannelStrips + AnalyserNodes`)
-      for (let i = 1; i <= numChannels; i++) {
-        const s = initialState.channels?.find((c: any) => c.id === i) ?? {}
-        this._buildAndRegisterChannel(i, s, rawCtx)
-        bl('AudioEngineSingleton.ts', 'channel-built', `ChannelStrip ch${i} construido`)
-      }
-      console.log(`[ENGINE] ${numChannels} canales listos`)
-
-      // 6b. WorkletManager — deshabilitado en Electron/Windows.
-      // audioWorklet.addModule() provoca ACCESS_VIOLATION (-1073741819) en el hilo
-      // de audio de Chromium en esta configuración Electron + WASAPI + Windows.
-      // El gate corre en modo main-thread vía tickMeter() en el RAF loop.
-      // Gates funcionales — sin impacto en el usuario.
-      console.log('[ENGINE] WorkletManager — omitido (modo main-thread gate activo)')
-
-      // 7. Estado inicial maestro
-      const s = initialState
-      if (s.mainVolume != null) this.setMainVolume(s.mainVolume)
-      if (s.subVolume  != null) this.setSubVolume(s.subVolume)
-      if (s.fx?.reverb)         this.setGlobalReverb(s.fx.reverb)
-      if (s.fx?.delay)          this.setGlobalDelay(s.fx.delay)
-      if (s.fx?.fxReturn)       this.setFxReturn(s.fx.fxReturn)
-
-      // 8. Metering + profiling
-      if (!(window as any).__ONA_METERING_DISABLED) {
-        bl('AudioEngineSingleton.ts', 'metering-start', 'MeteringEngine.start() — LLAMANDO')
-        this._meteringEngine.start(this._strips, this._busEngine)
-        bl('AudioEngineSingleton.ts', 'metering-done', 'MeteringEngine.start() — RETORNÓ')
-        // Esperar 200ms para que el motor de audio se asiente y el primer tick de metering
-        // complete antes de que React pueda montar componentes que acceden a AnalyserNodes.
-        await new Promise(r => setTimeout(r, 200))
-        bl('AudioEngineSingleton.ts', 'metering-settle', 'settle 200ms — AudioNodes estabilizados')
-        console.log('[ENGINE] MeteringEngine iniciado')
-      }
-      perfMonitor.start()
-      dspWatchdog.start()
-
-      // 8b. Paso 8 — Test signals + validator + console report
-      exposeTestSignalAPI(rawCtx, rawCtx.destination)
-      exposeValidatorAPI(rawCtx, this._strips)
-      this._exposePaso8API(rawCtx)
-
-      // 8c. Paso 10 — Multitrack I/O foundation
-      latencyMeasurement.attach(rawCtx)
-      recordingClock.attach(rawCtx)
-      multitrackPlayer.setContext(rawCtx)
-      for (const [id, strip] of this._strips) {
-        multitrackPlayer.setTarget(id, strip.inputGain as AudioNode)
-      }
-      this._exposePaso10API(rawCtx)
-
-      // 8e. Paso 12 — FX buses console API + benchmark
-      this._exposePaso12API(rawCtx)
-
-      // 8g. Paso 14 — Professional mix engine + gain staging
-      this._initMixEngine(rawCtx)
-
-      // 8h. Paso 15 — Scalability + resource management
-      this._initScalability(rawCtx)
-
-      // 8f. Paso 13 — MIDI control surface foundation
-      await this._initControlSurface()
-
-      // 8d. Paso 11 — Production stability systems
-      safeRecovery.attach(rawCtx)
-      dspWatchdog.onWarning((issue) => {
-        if (issue.includes('congelado') || issue.includes('frozen')) {
-          safeRecovery.notifyWorkletFrozen(issue)
-        }
-      })
-      hal.onDeviceDisconnected((channelId, deviceId) => {
-        safeRecovery.notifyDeviceDisconnect(channelId, deviceId)
-      })
-      cpuSafetyMode.startAutoDetect(() => dspScheduler.getMetrics().callbackJitterMs)
-      this._exposePaso11API(rawCtx)
-
-      // 9. Autosave (Paso 5)
-      persistenceEngine.startAutosave(30_000)
-
+      // FASE 1 completa — retornar para que la UI pueda renderizar
       this._state = 'running'
-      const graphStats = dspGraph.getStats()
-      const latency    = hal.getLatency()
-      console.log(`[ENGINE] listo ✓ — ${graphStats.nodes} nodos DSP, ${graphStats.edges} aristas, ` +
-        `latencia: ${latency.totalMs.toFixed(1)}ms`)
+      this._emitProgress({ phase: 1, total: 5 })
+      console.log('[ENGINE] FASE 1 lista — AudioContext estable, fases 2-5 en background')
+
+      // Encadenar fases 2-5 con setTimeout
+      setTimeout(() => this._phase2Init().catch(e => console.error('[ENGINE] Fase 2 error:', e)), 800)
+
     } catch (err) {
       this._state = 'uninitialized'
       throw err
@@ -1880,6 +1798,163 @@ class AudioEngineSingleton {
       src.connect((strip.inputGain as any).input ?? strip.inputGain)
     }
     this._mediaSources.set(channelId, src)
+  }
+
+  // ── Fases 2-5 del arranque escalonado ─────────────────────────────────────────
+
+  private async _phase2Init(): Promise<void> {
+    const rawCtx = this._rawCtx!
+    this._busEngine.initialize()
+    dspGraph.register('bus_main', this._busEngine.getBus('main')!.gain)
+    dspGraph.register('bus_sub',  this._busEngine.getBus('sub')!.gain)
+    this._emitProgress({ phase: 2, total: 5 })
+    console.log('[ENGINE] FASE 2 lista — BusEngine')
+    setTimeout(() => this._phase3Init().catch(e => console.error('[ENGINE] Fase 3 error:', e)), 1000)
+  }
+
+  private async _phase3Init(): Promise<void> {
+    const rawCtx = this._rawCtx!
+    const mainIn = this._busEngine.getBus('main')!.gain as GainNode
+    const subIn  = this._busEngine.getBus('sub')!.gain  as GainNode
+    auxBusEngine.initialize(rawCtx)
+    subgroupEngine.initialize(rawCtx, mainIn, subIn)
+    cueBus.initialize(rawCtx)
+    routingMatrix.initialize(rawCtx, rawCtx.destination)
+    routingMatrix.registerSource('main', this._busEngine.getBus('main')!.fader as AudioNode)
+    routingMatrix.registerSource('sub',  this._busEngine.getBus('sub')!.fader  as AudioNode)
+    routingMatrix.registerSource('cue',  cueBus.fader!)
+    for (let i = 1; i <= NUM_AUX; i++) {
+      routingMatrix.registerSource(`aux${i}` as any, auxBusEngine.getBus(i)!.fader)
+    }
+    for (let i = 1; i <= NUM_GROUPS; i++) {
+      routingMatrix.registerSource(`group${i}` as any, subgroupEngine.getGroup(i)!.fader)
+    }
+    this._emitProgress({ phase: 3, total: 5 })
+    console.log('[ENGINE] FASE 3 lista — AuxBus + Subgroup + Routing')
+    setTimeout(() => this._phase4Init().catch(e => console.error('[ENGINE] Fase 4 error:', e)), 1000)
+  }
+
+  private async _phase4Init(): Promise<void> {
+    const rawCtx     = this._rawCtx!
+    const mainBusGain = this._busEngine.getBus('main')!.gain as GainNode
+    fxBusEngine.initialize(rawCtx, mainBusGain)
+    await this._buildGlobalFx()
+    this._emitProgress({ phase: 4, total: 5 })
+    console.log('[ENGINE] FASE 4 lista — FxBusEngine + Global FX')
+    setTimeout(() => this._phase5Init().catch(e => console.error('[ENGINE] Fase 5 error:', e)), 800)
+  }
+
+  private async _phase5Init(): Promise<void> {
+    const rawCtx      = this._rawCtx!
+    const numChannels  = this._numChannels
+    const initialState = this._initialState
+
+    // Canales
+    bl('AudioEngineSingleton.ts', 'channels-start', `creando ${numChannels} ChannelStrips`)
+    for (let i = 1; i <= numChannels; i++) {
+      const s = initialState.channels?.find((c: any) => c.id === i) ?? {}
+      this._buildAndRegisterChannel(i, s, rawCtx)
+      bl('AudioEngineSingleton.ts', 'channel-built', `ChannelStrip ch${i} construido`)
+    }
+    console.log(`[ENGINE] ${numChannels} canales listos`)
+    console.log('[ENGINE] WorkletManager — omitido (modo main-thread gate activo)')
+
+    // Estado inicial maestro
+    const s = initialState
+    if (s.mainVolume != null) this.setMainVolume(s.mainVolume)
+    if (s.subVolume  != null) this.setSubVolume(s.subVolume)
+    if (s.fx?.reverb)         this.setGlobalReverb(s.fx.reverb)
+    if (s.fx?.delay)          this.setGlobalDelay(s.fx.delay)
+    if (s.fx?.fxReturn)       this.setFxReturn(s.fx.fxReturn)
+
+    // MeteringEngine — WASAPI lleva >3s activo, el grafo está estabilizado
+    if (!(window as any).__ONA_METERING_DISABLED) {
+      bl('AudioEngineSingleton.ts', 'metering-start', 'MeteringEngine.start() — LLAMANDO')
+      this._meteringEngine.start(this._strips, this._busEngine)
+      bl('AudioEngineSingleton.ts', 'metering-done', 'MeteringEngine.start() — RETORNÓ')
+    }
+    perfMonitor.start()
+    dspWatchdog.start()
+
+    // APIs de consola y subsistemas
+    exposeTestSignalAPI(rawCtx, rawCtx.destination)
+    exposeValidatorAPI(rawCtx, this._strips)
+    this._exposePaso8API(rawCtx)
+    latencyMeasurement.attach(rawCtx)
+    recordingClock.attach(rawCtx)
+    multitrackPlayer.setContext(rawCtx)
+    for (const [id, strip] of this._strips) {
+      multitrackPlayer.setTarget(id, strip.inputGain as AudioNode)
+    }
+    this._exposePaso10API(rawCtx)
+    this._exposePaso12API(rawCtx)
+    this._initMixEngine(rawCtx)
+    this._initScalability(rawCtx)
+    await this._initControlSurface()
+
+    // Estabilidad de producción
+    safeRecovery.attach(rawCtx)
+    dspWatchdog.onWarning((issue) => {
+      if (issue.includes('congelado') || issue.includes('frozen')) {
+        safeRecovery.notifyWorkletFrozen(issue)
+      }
+    })
+    hal.onDeviceDisconnected((channelId, deviceId) => {
+      safeRecovery.notifyDeviceDisconnect(channelId, deviceId)
+    })
+    cpuSafetyMode.startAutoDetect(() => dspScheduler.getMetrics().callbackJitterMs)
+    this._exposePaso11API(rawCtx)
+    persistenceEngine.startAutosave(30_000)
+
+    this._emitProgress({ phase: 5, total: 5 })
+    this._emitProgress('ready')
+
+    const graphStats = dspGraph.getStats()
+    const latency    = hal.getLatency()
+    console.log(`[ENGINE] FASE 5 lista ✓ — ${graphStats.nodes} nodos DSP, ${graphStats.edges} aristas, ` +
+      `latencia: ${latency.totalMs.toFixed(1)}ms`)
+  }
+
+  // ── Isolation init — solo para diagnóstico de crash, NO para producción ───────
+  private async _isolationInit(rawCtx: AudioContext, step: number): Promise<void> {
+    console.warn(`[ENGINE] ⚠ ISOLATION STEP ${step} — init parcial, solo para diagnóstico`)
+
+    // PASO 1 — solo AudioContext + un GainNode pasante
+    // Si este paso crashea, el problema es WebAudio/WASAPI en sí, no los nodos del engine
+    const probe = rawCtx.createGain()
+    probe.gain.value = 0   // silencio — solo crea la conexión mínima
+    probe.connect(rawCtx.destination)
+    console.log('[ENGINE] ISOLATION 1 — probe GainNode → destination conectado')
+    if (step <= 1) return
+
+    // PASO 2 — + BusEngine + SubgroupEngine (ambos crean AnalyserNodes internos)
+    // Si este paso crashea pero paso 1 no, los AnalyserNodes de BusEngine/Subgroup son el problema
+    this._busEngine.initialize()
+    const mainIn = this._busEngine.getBus('main')!.gain as GainNode
+    const subIn  = this._busEngine.getBus('sub')!.gain  as GainNode
+    subgroupEngine.initialize(rawCtx, mainIn, subIn)
+    console.log('[ENGINE] ISOLATION 2 — BusEngine + SubgroupEngine listos')
+    if (step <= 2) return
+
+    // PASO 3 — + FxBusEngine (GainNodes puros, sin AnalyserNodes ni watchRunaway desde el fix)
+    // Si este paso crashea, algo en el grafo de FxBusEngine sigue siendo problemático
+    const mainBusGain = this._busEngine.getBus('main')!.gain as GainNode
+    fxBusEngine.initialize(rawCtx, mainBusGain)
+    console.log('[ENGINE] ISOLATION 3 — FxBusEngine listo')
+    if (step <= 3) return
+
+    // PASO 4 — + un único ChannelStrip (ch1) sin MeteringEngine
+    // Si este paso crashea, el crash está en la cadena DSP de ChannelStrip
+    this._buildAndRegisterChannel(1, {}, rawCtx)
+    console.log('[ENGINE] ISOLATION 4 — ch1 ChannelStrip construido')
+    if (step <= 4) return
+
+    // PASO 5 — + MeteringEngine RAF con valores simulados (sin AnalyserNodes)
+    // Si este paso crashea, el RAF loop o el settle de 200ms es el problema
+    this._meteringEngine.start(this._strips, this._busEngine)
+    console.log('[ENGINE] ISOLATION 5 — MeteringEngine.start() retornó')
+    await new Promise(r => setTimeout(r, 250))
+    console.log('[ENGINE] ISOLATION 5 — settle 250ms completado SIN crash ✓')
   }
 }
 

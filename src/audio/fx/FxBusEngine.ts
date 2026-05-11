@@ -2,19 +2,19 @@
  * FxBusEngine.ts — 4 buses FX profesionales con procesador intercambiable.
  *
  * Arquitectura por bus (Paso 12):
- *   input (GainNode) → [bypass | processor.input → processor.output] → analyser → returnGain → mainBus
+ *   input (GainNode) → [bypass | processor.input → processor.output] → mid(GainNode) → returnGain → mainBus
  *
- *   Sin processor:   input → bypass → analyser → returnGain
- *   Con processor:   input → processor.input; processor.output → analyser → returnGain
+ *   Sin processor:   input → bypass → mid → returnGain
+ *   Con processor:   input → processor.input; processor.output → mid → returnGain
  *
  * Processor slot:
  *   Cada bus aloja UN processor (DelayEngine | ReverbEngine) intercambiable en vivo.
  *   attachProcessor(busId, proc, type): cablea processor, desconecta bypass.
  *   detachProcessor(busId): desconecta processor, reconecta bypass.
  *
- * Protección CPU:
- *   watchRunaway() en cada analyser: peak > 1.4 (+3dBFS) → silencia returnGain.
- *   Processor destruye sus propios denormal kicks en destroy().
+ * NOTA: AnalyserNode + watchRunaway() deshabilitados — causan ACCESS_VIOLATION (-1073741819)
+ *   con WASAPI en Electron/Windows cuando el hilo de audio nativo hace su primer render.
+ *   mid es un GainNode pasante que preserva el grafo sin AnalyserNode.
  *
  * Sends de canal:
  *   ChannelStrip.setFxBusSend(busId, fxBusEngine.getInput(busId), params)
@@ -26,15 +26,12 @@
  */
 
 import * as Tone from 'tone'
-import { watchRunaway } from './FxCpuProtection'
 import type { DelayEngine } from './DelayEngine'
 import type { ReverbEngine } from './ReverbEngine'
 
 function _toneCtx() { return Tone.getContext() as unknown as AudioContext }
 
 export const NUM_FX_BUSES = 4
-
-const ANALYSER_FFT_FX = 256
 
 type FxProcessor = DelayEngine | ReverbEngine
 
@@ -48,11 +45,9 @@ export interface FxBusState {
 interface FxBusNodes {
   input:       GainNode
   bypass:      GainNode
-  analyser:    AnalyserNode
-  peakBuf:     Float32Array
+  mid:         GainNode    // AnalyserNode deshabilitado — ACCESS_VIOLATION con WASAPI en Electron/Windows
   returnGain:  GainNode
   processor:   FxProcessor | null
-  stopRunaway: (() => void) | null
   state:       FxBusState
 }
 
@@ -70,34 +65,25 @@ class FxBusEngineImpl {
     for (let i = 1; i <= NUM_FX_BUSES; i++) {
       const input      = nc.createGain()
       const bypass     = nc.createGain()
-      const analyser   = nc.createAnalyser()
+      const mid        = nc.createGain()   // passthrough — AnalyserNode deshabilitado (ACCESS_VIOLATION WASAPI)
       const returnGain = nc.createGain()
 
-      analyser.fftSize               = ANALYSER_FFT_FX
-      analyser.smoothingTimeConstant = 0
       input.gain.value      = 1
       bypass.gain.value     = 1
+      mid.gain.value        = 1
       returnGain.gain.value = 0   // silent until activated
 
       // Default bypass path
       input.connect(bypass)
-      bypass.connect(analyser)
-      analyser.connect(returnGain)
+      bypass.connect(mid)
+      mid.connect(returnGain)
 
       // Return to main bus
       returnGain.connect(mainBus)
 
-      // Runaway protection: silence on overload
-      const stopRunaway = watchRunaway(analyser, () => {
-        console.warn(`[FxBus ${i}] Runaway detected — silencing bus`)
-        returnGain.gain.setTargetAtTime(0, ctx.currentTime, 0.001)
-      })
-
       this._buses.set(i, {
-        input, bypass, analyser, returnGain,
-        peakBuf:     new Float32Array(ANALYSER_FFT_FX),
+        input, bypass, mid, returnGain,
         processor:   null,
-        stopRunaway,
         state: { id: i, active: false, wetLevel: 100, processorType: null },
       })
     }
@@ -128,7 +114,7 @@ class FxBusEngineImpl {
 
     // Wire processor
     b.input.connect(processor.input)
-    processor.output.connect(b.analyser)
+    processor.output.connect(b.mid)
 
     b.processor = processor
     b.state.processorType = type
@@ -143,8 +129,8 @@ class FxBusEngineImpl {
 
   private _detachInternal(b: FxBusNodes): void {
     if (!b.processor) return
-    try { b.input.disconnect(b.processor.input)       } catch (_) {}
-    try { b.processor.output.disconnect(b.analyser)   } catch (_) {}
+    try { b.input.disconnect(b.processor.input)     } catch (_) {}
+    try { b.processor.output.disconnect(b.mid)      } catch (_) {}
     // Restore bypass
     b.input.connect(b.bypass)
     b.state.processorType = null
@@ -172,16 +158,8 @@ class FxBusEngineImpl {
 
   // ── Metering ──────────────────────────────────────────────────────────────────
 
-  getMeterValue(id: number): number {
-    const b = this._buses.get(id)
-    if (!b) return -Infinity
-    b.analyser.getFloatTimeDomainData(b.peakBuf)
-    let peak = 0
-    for (let i = 0; i < b.peakBuf.length; i++) {
-      const a = Math.abs(b.peakBuf[i])
-      if (a > peak) peak = a
-    }
-    return peak > 0 ? 20 * Math.log10(peak) : -Infinity
+  getMeterValue(_id: number): number {
+    return -Infinity  // AnalyserNode deshabilitado — software metering no implementado para FX buses
   }
 
   // ── State ─────────────────────────────────────────────────────────────────────
@@ -198,11 +176,10 @@ class FxBusEngineImpl {
 
   destroy(): void {
     for (const b of this._buses.values()) {
-      b.stopRunaway?.()
       if (b.processor) {
         try { b.processor.destroy() } catch (_) {}
       }
-      for (const n of [b.input, b.bypass, b.analyser, b.returnGain] as AudioNode[]) {
+      for (const n of [b.input, b.bypass, b.mid, b.returnGain] as AudioNode[]) {
         try { n.disconnect() } catch (_) {}
       }
     }
